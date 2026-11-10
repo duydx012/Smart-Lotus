@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./icons";
+import { decodeQrFromCanvas, decodeQrFromImageData } from "@/lib/qr-decoder";
 
 export type QrScannerModalProps = {
   onClose: () => void;
@@ -9,7 +10,7 @@ export type QrScannerModalProps = {
   onToast?: (msg: string) => void;
 };
 
-// Helper: extract joinCode from raw QR string (could be a full URL, or prefixed SMARTLOTUS:, or pure code)
+// Helper: extract joinCode from raw QR string (could be URL, SMARTLOTUS:..., or raw code)
 export function extractJoinCodeFromText(raw: string): string {
   const trimmed = raw.trim();
   try {
@@ -19,7 +20,7 @@ export function extractJoinCodeFromText(raw: string): string {
       if (code) return code.trim().toUpperCase();
     }
   } catch {
-    // Not a valid URL
+    // Not a URL
   }
 
   // Handle formats like "SMARTLOTUS:JOIN:ABCDEF" or "JOIN:ABCDEF"
@@ -37,17 +38,18 @@ export default function QrScannerModal({ onClose, onCodeDetected, onToast }: QrS
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState("");
   const [uploading, setUploading] = useState(false);
-  const [scanning, setScanning] = useState(true);
+  const [scannedResult, setScannedResult] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const scanIntervalRef = useRef<number | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Stop camera on unmount or tab change
   const stopCamera = () => {
-    if (scanIntervalRef.current) {
-      window.clearInterval(scanIntervalRef.current);
-      scanIntervalRef.current = null;
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
     }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
@@ -65,7 +67,7 @@ export default function QrScannerModal({ onClose, onCodeDetected, onToast }: QrS
   // Start camera when on "camera" tab
   useEffect(() => {
     if (tab === "camera") {
-      startCamera();
+      void startCamera();
     } else {
       stopCamera();
     }
@@ -74,71 +76,118 @@ export default function QrScannerModal({ onClose, onCodeDetected, onToast }: QrS
   async function startCamera() {
     stopCamera();
     setCameraError("");
-    setScanning(true);
+    setScannedResult(null);
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setCameraError("Trình duyệt không hỗ trợ truy cập camera. Vui lòng chuyển sang tab 'Tải ảnh mã QR'.");
+      setCameraError("Trình duyệt không hỗ trợ mở camera. Vui lòng chuyển sang tab 'Tải ảnh mã QR'.");
       return;
     }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
       });
       streamRef.current = stream;
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.setAttribute("playsinline", "true");
         await videoRef.current.play();
         setCameraActive(true);
-        startScanningLoop();
+        startRealtimeScanning();
       }
     } catch (err: unknown) {
       console.warn("Camera access denied or failed", err);
-      setCameraError("Không thể mở camera. Hãy đảm bảo bạn đã cấp quyền camera hoặc tải ảnh mã QR lên.");
+      setCameraError("Không thể mở camera. Hãy đảm bảo bạn đã bấm 'Cho phép' (Allow) quyền camera trên trình duyệt hoặc tải ảnh mã QR lên.");
     }
   }
 
   function handleDetected(code: string) {
     const finalCode = extractJoinCodeFromText(code);
-    if (!finalCode) return;
+    if (!finalCode || scannedResult) return;
+    setScannedResult(finalCode);
     stopCamera();
-    onToast?.(`Đã quét thấy mã lớp: ${finalCode}`);
-    onCodeDetected(finalCode);
-  }
 
-  function startScanningLoop() {
-    // Check if BarcodeDetector is supported natively in browser
-    const BarcodeDetectorClass = (window as unknown as { BarcodeDetector?: any }).BarcodeDetector;
-
-    if (BarcodeDetectorClass) {
-      try {
-        const detector = new BarcodeDetectorClass({ formats: ["qr_code"] });
-        scanIntervalRef.current = window.setInterval(async () => {
-          if (!videoRef.current || videoRef.current.readyState < 2) return;
-          try {
-            const barcodes = await detector.detect(videoRef.current);
-            if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
-              handleDetected(barcodes[0].rawValue);
-            }
-          } catch {
-            // frame detection error, keep trying
-          }
-        }, 300);
-        return;
-      } catch (e) {
-        console.warn("BarcodeDetector init failed", e);
-      }
+    // Vibrate phone if supported
+    if (typeof navigator !== "undefined" && navigator.vibrate) {
+      navigator.vibrate(100);
     }
 
-    // Fallback: if BarcodeDetector is not supported, inform the user to upload image or enter code
-    // while still keeping camera preview alive
+    onToast?.(`✨ Quét thành công! Mã lớp: ${finalCode}`);
+    setTimeout(() => {
+      onCodeDetected(finalCode);
+    }, 400);
+  }
+
+  function startRealtimeScanning() {
+    if (!canvasRef.current) {
+      canvasRef.current = document.createElement("canvas");
+    }
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return;
+
+    let lastScanTime = 0;
+
+    const scanFrame = (timestamp: number) => {
+      const video = videoRef.current;
+      if (!video || video.readyState < 2 || !streamRef.current) {
+        animationFrameRef.current = requestAnimationFrame(scanFrame);
+        return;
+      }
+
+      // Scan every 120ms (~8 times per second for smooth performance and instant detection)
+      if (timestamp - lastScanTime > 120) {
+        lastScanTime = timestamp;
+
+        try {
+          const vw = video.videoWidth;
+          const vh = video.videoHeight;
+          if (vw > 0 && vh > 0) {
+            // Resize canvas to video size
+            if (canvas.width !== vw || canvas.height !== vh) {
+              canvas.width = vw;
+              canvas.height = vh;
+            }
+
+            ctx.drawImage(video, 0, 0, vw, vh);
+
+            // 1. Try decoding with jsQR (100% works on all browsers and devices)
+            const decoded = decodeQrFromCanvas(canvas);
+            if (decoded) {
+              handleDetected(decoded);
+              return;
+            }
+
+            // 2. Also try center crop (zoom in on the viewfinder area for higher accuracy from afar)
+            const cropSize = Math.min(vw, vh) * 0.75;
+            const cropX = (vw - cropSize) / 2;
+            const cropY = (vh - cropSize) / 2;
+            const centerImageData = ctx.getImageData(cropX, cropY, cropSize, cropSize);
+            const centerDecoded = decodeQrFromImageData(centerImageData);
+            if (centerDecoded) {
+              handleDetected(centerDecoded);
+              return;
+            }
+          }
+        } catch {
+          // ignore scan frame exception
+        }
+      }
+
+      animationFrameRef.current = requestAnimationFrame(scanFrame);
+    };
+
+    animationFrameRef.current = requestAnimationFrame(scanFrame);
   }
 
   async function handleImageUpload(file: File) {
     setUploading(true);
     setCameraError("");
-
-    const BarcodeDetectorClass = (window as unknown as { BarcodeDetector?: any }).BarcodeDetector;
 
     try {
       const img = new Image();
@@ -150,12 +199,18 @@ export default function QrScannerModal({ onClose, onCodeDetected, onToast }: QrS
         img.src = objectUrl;
       });
 
-      if (BarcodeDetectorClass) {
-        const detector = new BarcodeDetectorClass({ formats: ["qr_code"] });
-        const barcodes = await detector.detect(img);
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth || img.width;
+      canvas.height = img.naturalHeight || img.height;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const decoded = decodeQrFromCanvas(canvas);
         URL.revokeObjectURL(objectUrl);
-        if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
-          handleDetected(barcodes[0].rawValue);
+
+        if (decoded) {
+          handleDetected(decoded);
           return;
         }
       }
@@ -282,7 +337,7 @@ export default function QrScannerModal({ onClose, onCodeDetected, onToast }: QrS
               style={{
                 position: "relative",
                 width: "100%",
-                height: "260px",
+                height: "270px",
                 background: "#000000",
                 borderRadius: "18px",
                 overflow: "hidden",
@@ -295,6 +350,7 @@ export default function QrScannerModal({ onClose, onCodeDetected, onToast }: QrS
                 ref={videoRef}
                 playsInline
                 muted
+                autoPlay
                 style={{
                   width: "100%",
                   height: "100%",
@@ -303,29 +359,36 @@ export default function QrScannerModal({ onClose, onCodeDetected, onToast }: QrS
                 }}
               />
 
-              {/* Khung quét viewfinder (ô vuông ở giữa) */}
+              {/* Viewfinder box (khung quét) */}
               {cameraActive && (
                 <div
                   style={{
                     position: "absolute",
-                    width: "180px",
-                    height: "180px",
-                    border: "2.5px solid #a855f7",
-                    borderRadius: "16px",
-                    boxShadow: "0 0 0 9999px rgba(0, 0, 0, 0.45)",
+                    width: "190px",
+                    height: "190px",
+                    border: "2.5px solid #c084fc",
+                    borderRadius: "18px",
+                    boxShadow: "0 0 0 9999px rgba(0, 0, 0, 0.42)",
                     pointerEvents: "none",
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "space-between",
+                    padding: "6px",
                   }}
                 >
-                  {/* Tia quét chuyển động */}
+                  {/* Tia laser quét lên xuống */}
                   <div
                     style={{
                       width: "100%",
-                      height: "2px",
-                      background: "linear-gradient(90deg, transparent, #c084fc, transparent)",
-                      boxShadow: "0 0 8px #c084fc",
-                      animation: "scanPulse 1.8s infinite ease-in-out",
+                      height: "2.5px",
+                      background: "linear-gradient(90deg, transparent, #e879f9, #c084fc, transparent)",
+                      boxShadow: "0 0 10px #c084fc",
+                      animation: "scanPulse 2s infinite ease-in-out",
                     }}
                   />
+                  <span style={{ fontSize: "10px", color: "#f5d0fe", fontWeight: 700, textAlign: "center" }}>
+                    Đặt mã QR vào giữa khung
+                  </span>
                 </div>
               )}
 
@@ -343,7 +406,7 @@ export default function QrScannerModal({ onClose, onCodeDetected, onToast }: QrS
             </div>
 
             <p style={{ fontSize: "12px", color: "#6b7280", margin: "12px 0 0" }}>
-              Hướng camera về phía mã QR lớp học của giáo viên để tự động nhận diện.
+              Hướng camera về phía mã QR của giáo viên. Hệ thống sẽ tự động quét và đưa bạn vào lớp!
             </p>
           </div>
         )}
@@ -370,7 +433,9 @@ export default function QrScannerModal({ onClose, onCodeDetected, onToast }: QrS
               <strong style={{ fontSize: "14px", color: "#581c87" }}>
                 {uploading ? "Đang phân tích mã QR..." : "Bấm để chọn ảnh mã QR"}
               </strong>
-              <span style={{ fontSize: "12px", color: "#6b7280" }}>Hỗ trợ ảnh chụp màn hình, ảnh chụp điện thoại (PNG, JPG)</span>
+              <span style={{ fontSize: "12px", color: "#6b7280" }}>
+                Hỗ trợ ảnh chụp màn hình, ảnh tải về từ Zalo/Messenger (PNG, JPG)
+              </span>
               <input
                 type="file"
                 accept="image/*"

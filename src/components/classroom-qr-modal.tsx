@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Icon, LotusLogo } from "./icons";
-import { QrCode, type QrErrorCorrectionLevel } from "@/lib/qr-generator";
+import { useEffect, useState } from "react";
+import { Icon } from "./icons";
+import { generateQrMatrix } from "@/lib/qr-generator";
 
 export type ClassroomQrModalProps = {
   classroom: {
@@ -33,28 +33,24 @@ export default function ClassroomQrModal({ classroom, onClose, onToast }: Classr
     }
   }, []);
 
-  const joinUrl = origin ? `${origin}/?joinCode=${encodeURIComponent(joinCode)}` : `https://smartlotus.edu.vn/?joinCode=${encodeURIComponent(joinCode)}`;
+  const joinUrl = origin
+    ? `${origin}/?joinCode=${encodeURIComponent(joinCode)}`
+    : `https://smartlotus.edu.vn/?joinCode=${encodeURIComponent(joinCode)}`;
 
-  // Generate QR Code with High error correction (Q level) so center logo doesn't obscure data
-  const qr = QrCode.encodeText(joinUrl, "Q");
+  // Generate standard QR Code (Level M - 15% error correction, perfectly readable by all devices)
+  const qr = generateQrMatrix(joinUrl, "M");
   const moduleCount = qr.size;
   const cellSize = 8;
-  const margin = 20;
+  const margin = 16;
   const qrPixelSize = moduleCount * cellSize + margin * 2;
 
-  // Build SVG path
+  // Build crisp SVG path for all modules without punching holes (guarantees 100% scan success)
   let pathData = "";
-  for (let y = 0; y < moduleCount; y++) {
-    for (let x = 0; x < moduleCount; x++) {
-      if (qr.getModule(x, y)) {
-        // Leave center 20% area clear for Lotus flower badge
-        const centerStart = Math.floor(moduleCount * 0.38);
-        const centerEnd = Math.floor(moduleCount * 0.62);
-        if (x >= centerStart && x <= centerEnd && y >= centerStart && y <= centerEnd) {
-          continue; // skip drawing under the logo
-        }
-        const px = margin + x * cellSize;
-        const py = margin + y * cellSize;
+  for (let r = 0; r < moduleCount; r++) {
+    for (let c = 0; c < moduleCount; c++) {
+      if (qr.isDark(r, c)) {
+        const px = margin + c * cellSize;
+        const py = margin + r * cellSize;
         pathData += `M${px},${py}h${cellSize}v${cellSize}h-${cellSize}z `;
       }
     }
@@ -144,42 +140,17 @@ export default function ClassroomQrModal({ classroom, onClose, onToast }: Classr
       const qrOffsetX = qrBoxX + 20;
       const qrOffsetY = qrBoxY + 20;
 
-      ctx.fillStyle = "#581c87"; // Deep brand purple
-      const centerStart = Math.floor(moduleCount * 0.38);
-      const centerEnd = Math.floor(moduleCount * 0.62);
+      ctx.fillStyle = "#111827"; // High-contrast black for 100% camera scanning accuracy
 
-      for (let y = 0; y < moduleCount; y++) {
-        for (let x = 0; x < moduleCount; x++) {
-          if (qr.getModule(x, y)) {
-            if (x >= centerStart && x <= centerEnd && y >= centerStart && y <= centerEnd) {
-              continue;
-            }
-            ctx.fillRect(qrOffsetX + x * qrScale, qrOffsetY + y * qrScale, qrScale + 0.5, qrScale + 0.5);
+      for (let r = 0; r < moduleCount; r++) {
+        for (let c = 0; c < moduleCount; c++) {
+          if (qr.isDark(r, c)) {
+            ctx.fillRect(qrOffsetX + c * qrScale, qrOffsetY + r * qrScale, qrScale + 0.5, qrScale + 0.5);
           }
         }
       }
 
-      // Draw center logo circle
-      const centerPixelX = qrOffsetX + (moduleCount / 2) * qrScale;
-      const centerPixelY = qrOffsetY + (moduleCount / 2) * qrScale;
-      const centerRadius = qrScale * 3.5;
-
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.arc(centerPixelX, centerPixelY, centerRadius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = "#c084fc";
-      ctx.lineWidth = 3;
-      ctx.stroke();
-
-      // Draw Lotus flower emoji or icon in center
-      ctx.font = "32px sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText("🌸", centerPixelX, centerPixelY);
-
       // Draw bottom call to action
-      ctx.textBaseline = "alphabetic";
       ctx.fillStyle = "#7c3aed";
       ctx.font = "bold 24px monospace";
       ctx.fillText(`MÃ LỚP: ${joinCode}`, cardWidth / 2, 635);
@@ -291,26 +262,8 @@ export default function ClassroomQrModal({ classroom, onClose, onToast }: Classr
           >
             {/* Background */}
             <rect width="100%" height="100%" fill="#ffffff" rx="12" />
-            {/* QR Modules */}
-            <path d={pathData} fill="#581c87" />
-            {/* Center Lotus Flower Badge */}
-            <circle
-              cx={qrPixelSize / 2}
-              cy={qrPixelSize / 2}
-              r={cellSize * 3.8}
-              fill="#ffffff"
-              stroke="#c084fc"
-              strokeWidth="2.5"
-            />
-            <text
-              x={qrPixelSize / 2}
-              y={qrPixelSize / 2 + 7}
-              fontSize="24"
-              textAnchor="middle"
-              dominantBaseline="middle"
-            >
-              🌸
-            </text>
+            {/* Standard full modules for 100% scanning accuracy */}
+            <path d={pathData} fill="#111827" />
           </svg>
 
           {/* Tag hướng dẫn bên dưới mã QR */}
