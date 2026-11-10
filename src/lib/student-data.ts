@@ -58,6 +58,8 @@ export type Classroom = {
   joinCode?: string;
   teacherName?: string;
   studentCount?: number;
+  isExtra?: boolean;
+  schedule?: string;
 };
 
 export type ClassLearningProfile = {

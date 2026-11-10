@@ -8,7 +8,7 @@ import { Icon } from "./icons";
 
 async function loadStudentClassroomData() {
   return Promise.all([
-    smartLotusApi.getClassrooms(),
+    smartLotusApi.getClassrooms("regular"),
     smartLotusApi.getAssignments(),
     smartLotusApi.getStudentCode(),
     smartLotusApi.getClassroomInvitations(),

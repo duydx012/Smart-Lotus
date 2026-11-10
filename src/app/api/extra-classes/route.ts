@@ -34,7 +34,7 @@ export async function GET(request: Request) {
 
     const teacherIds = teacherRows.map((t) => t.id);
 
-    // 2. Lấy tất cả lớp học thuộc về các giáo viên này
+    // 2. Lấy tất cả lớp học thêm (is_extra = true) thuộc về các giáo viên này
     const classRows = await db
       .select({
         id: classrooms.id,
@@ -44,9 +44,10 @@ export async function GET(request: Request) {
         subject: classrooms.subject,
         description: classrooms.description,
         color: classrooms.color,
+        schedule: classrooms.schedule,
       })
       .from(classrooms)
-      .where(inArray(classrooms.teacherId, teacherIds))
+      .where(and(inArray(classrooms.teacherId, teacherIds), eq(classrooms.isExtra, true)))
       .orderBy(asc(classrooms.createdAt));
 
     const classIds = classRows.map((c) => c.id);
@@ -129,6 +130,7 @@ export async function GET(request: Request) {
             subject: cls.subject,
             description: cls.description,
             color: cls.color,
+            schedule: cls.schedule ?? undefined,
             studentCount: memberCounts.get(cls.id) ?? 0,
             membershipStatus: joinedClassIds.has(cls.id) ? "joined" : "not_joined",
             requestStatus: reqInfo ? reqInfo.status : "none",

@@ -26,23 +26,67 @@ export default function TeacherExtraClasses({
   const [selectedClassId, setSelectedClassId] = useState<string>("");
   const [filter, setFilter] = useState<"all" | "pending" | "accepted" | "declined">("pending");
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newClassName, setNewClassName] = useState("");
+  const [newClassLabel, setNewClassLabel] = useState("");
+  const [newClassSubject, setNewClassSubject] = useState("Toán");
+  const [newClassSchedule, setNewClassSchedule] = useState("");
+  const [newClassDescription, setNewClassDescription] = useState("");
+  const [newClassColor, setNewClassColor] = useState("purple");
 
-  useEffect(() => {
-    let active = true;
-    void smartLotusApi.getClassrooms().then(({ classrooms: items }) => {
-      if (!active) return;
+  async function loadClasses() {
+    try {
+      const { classrooms: items } = await smartLotusApi.getClassrooms("extra");
       setClassrooms(items);
       if (targetClassId) {
         setSelectedClassId(String(targetClassId));
-      } else if (items.length > 0 && !selectedClassId) {
+      } else if (items.length > 0 && (!selectedClassId || !items.some((c) => String(c.id) === String(selectedClassId)))) {
         setSelectedClassId(String(items[0].id));
       }
-    });
+      return items;
+    } catch (e) {
+      console.error("Load extra classrooms error", e);
+      return [];
+    }
+  }
 
-    return () => {
-      active = false;
-    };
+  useEffect(() => {
+    void loadClasses();
   }, [targetClassId]);
+
+  async function handleCreateExtraClass(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newClassName.trim()) {
+      onToast("Vui lòng nhập tên lớp học thêm");
+      return;
+    }
+    const label = (newClassLabel.trim() || newClassName.trim().slice(0, 10)).toUpperCase();
+    setCreating(true);
+    try {
+      const res = await smartLotusApi.createClassroom({
+        name: newClassName.trim(),
+        label,
+        subject: newClassSubject.trim() || "Toán",
+        description: newClassDescription.trim(),
+        color: newClassColor,
+        isExtra: true,
+        schedule: newClassSchedule.trim(),
+      });
+      onToast(`Đã mở lớp học thêm thành công: ${res.classroom.name}!`);
+      setShowCreateModal(false);
+      setNewClassName("");
+      setNewClassLabel("");
+      setNewClassSchedule("");
+      setNewClassDescription("");
+      const updated = await loadClasses();
+      setSelectedClassId(String(res.classroom.id));
+    } catch (err: unknown) {
+      onToast(err instanceof Error ? err.message : "Không thể tạo lớp học thêm");
+    } finally {
+      setCreating(false);
+    }
+  }
 
   const pendingCount = requests.filter((r) => r.status === "pending").length;
   const acceptedCount = requests.filter((r) => r.status === "accepted").length;
@@ -145,33 +189,57 @@ export default function TeacherExtraClasses({
           </button>
         </div>
 
-        {/* Dropdown chọn lớp nếu ở tab Feed */}
-        {mainTab === "feed" && classrooms.length > 0 && (
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ fontSize: "12px", fontWeight: 700, color: "#6b7280" }}>Đang chọn lớp:</span>
-            <select
-              value={selectedClassId}
-              onChange={(e) => setSelectedClassId(e.target.value)}
-              style={{
-                padding: "8px 14px",
-                borderRadius: "10px",
-                border: "1.5px solid #c084fc",
-                fontSize: "13px",
-                fontWeight: 750,
-                color: "#581c87",
-                background: "#faf5ff",
-                outline: "none",
-                cursor: "pointer",
-              }}
-            >
-              {classrooms.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} · {c.label} ({c.studentCount} học sinh)
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
+        {/* Actions bên phải header */}
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+          {mainTab === "feed" && classrooms.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontSize: "12px", fontWeight: 700, color: "#6b7280" }}>Lớp:</span>
+              <select
+                value={selectedClassId}
+                onChange={(e) => setSelectedClassId(e.target.value)}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: "10px",
+                  border: "1.5px solid #c084fc",
+                  fontSize: "13px",
+                  fontWeight: 750,
+                  color: "#581c87",
+                  background: "#faf5ff",
+                  outline: "none",
+                  cursor: "pointer",
+                }}
+              >
+                {classrooms.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} · {c.label} ({c.studentCount} học sinh)
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setShowCreateModal(true)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 14px",
+              borderRadius: "10px",
+              border: "none",
+              background: "linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)",
+              color: "#ffffff",
+              fontSize: "12.5px",
+              fontWeight: 750,
+              cursor: "pointer",
+              boxShadow: "0 2px 8px rgba(124, 58, 237, 0.25)",
+            }}
+          >
+            <Icon name="plus" size={15} />
+            <span>Mở lớp học thêm mới</span>
+          </button>
+        </div>
       </div>
 
       {/* ===================== TAB BẢNG TIN & TÀI LIỆU ===================== */}
@@ -190,7 +258,7 @@ export default function TeacherExtraClasses({
         ) : (
           <div
             style={{
-              padding: "40px",
+              padding: "48px 24px",
               textAlign: "center",
               background: "#faf5ff",
               borderRadius: "18px",
@@ -198,11 +266,32 @@ export default function TeacherExtraClasses({
               color: "#6b7280",
             }}
           >
-            <span style={{ fontSize: "36px" }}>🏫</span>
-            <h3 style={{ color: "#581c87", margin: "10px 0 4px" }}>Bạn chưa có lớp học nào</h3>
-            <p style={{ margin: 0, fontSize: "13px" }}>
-              Vui lòng vào mục "Lớp học" để tạo lớp học thêm trước, sau đó bảng tin và kho tài liệu sẽ sẵn sàng!
+            <span style={{ fontSize: "40px" }}>🏫</span>
+            <h3 style={{ color: "#581c87", margin: "14px 0 6px", fontSize: "18px" }}>Thầy/Cô chưa có lớp học thêm nào</h3>
+            <p style={{ margin: "0 0 20px", fontSize: "13.5px", color: "#6b7280" }}>
+              Lớp học thêm là không gian tự nguyện dành cho học sinh yêu thích môn học. Mở lớp ngay để các em gửi yêu cầu tham gia!
             </p>
+            <button
+              type="button"
+              onClick={() => setShowCreateModal(true)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "8px",
+                padding: "10px 20px",
+                borderRadius: "12px",
+                border: "none",
+                background: "linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)",
+                color: "#ffffff",
+                fontSize: "13.5px",
+                fontWeight: 750,
+                cursor: "pointer",
+                boxShadow: "0 4px 14px rgba(124, 58, 237, 0.3)",
+              }}
+            >
+              <Icon name="plus" size={16} />
+              <span>Mở lớp học thêm đầu tiên</span>
+            </button>
           </div>
         )
       ) : (
@@ -508,6 +597,218 @@ export default function TeacherExtraClasses({
             </div>
           )}
         </>
+      )}
+      {/* ===================== MODAL MỞ LỚP HỌC THÊM ===================== */}
+      {showCreateModal && (
+        <div className="student-modal-backdrop" onClick={() => !creating && setShowCreateModal(false)}>
+          <div
+            className="student-modal"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: "520px", padding: "26px", borderRadius: "20px" }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div
+                  style={{
+                    width: "40px",
+                    height: "40px",
+                    borderRadius: "12px",
+                    background: "#f3e8ff",
+                    color: "#7c3aed",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Icon name="school" size={22} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: "17px", color: "#1f2937", fontWeight: 800 }}>Mở lớp học thêm mới</h3>
+                  <p style={{ margin: 0, fontSize: "12px", color: "#6b7280" }}>Lớp học ngoại khóa, bồi dưỡng hoặc CLB tự nguyện</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !creating && setShowCreateModal(false)}
+                style={{ border: "none", background: "none", fontSize: "18px", cursor: "pointer", color: "#9ca3af" }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateExtraClass} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 750, color: "#374151", marginBottom: "5px" }}>
+                  Tên lớp học thêm <span style={{ color: "#ef4444" }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ví dụ: CLB Toán Tư Duy & Khám Phá Lớp 1"
+                  value={newClassName}
+                  onChange={(e) => setNewClassName(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "10px 14px",
+                    borderRadius: "10px",
+                    border: "1.5px solid #d1d5db",
+                    fontSize: "13.5px",
+                    outline: "none",
+                  }}
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 750, color: "#374151", marginBottom: "5px" }}>
+                    Mã hiển thị (Ký hiệu)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="VD: CLB-TOAN"
+                    value={newClassLabel}
+                    onChange={(e) => setNewClassLabel(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "10px 14px",
+                      borderRadius: "10px",
+                      border: "1.5px solid #d1d5db",
+                      fontSize: "13px",
+                      outline: "none",
+                      textTransform: "uppercase",
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 750, color: "#374151", marginBottom: "5px" }}>
+                    Môn học
+                  </label>
+                  <input
+                    type="text"
+                    value={newClassSubject}
+                    onChange={(e) => setNewClassSubject(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "10px 14px",
+                      borderRadius: "10px",
+                      border: "1.5px solid #d1d5db",
+                      fontSize: "13px",
+                      outline: "none",
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 750, color: "#374151", marginBottom: "5px" }}>
+                  Lịch học cố định (Hiện trên thẻ lớp cho học sinh)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ví dụ: Tối Thứ 3 & Thứ 6 (19:30 - 20:30)"
+                  value={newClassSchedule}
+                  onChange={(e) => setNewClassSchedule(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "10px 14px",
+                    borderRadius: "10px",
+                    border: "1.5px solid #d1d5db",
+                    fontSize: "13px",
+                    outline: "none",
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 750, color: "#374151", marginBottom: "5px" }}>
+                  Mô tả / Giới thiệu về lớp
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Mục tiêu bồi dưỡng, phương pháp học, đối tượng học sinh có thể tham gia..."
+                  value={newClassDescription}
+                  onChange={(e) => setNewClassDescription(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "10px 14px",
+                    borderRadius: "10px",
+                    border: "1.5px solid #d1d5db",
+                    fontSize: "13px",
+                    outline: "none",
+                    resize: "none",
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 750, color: "#374151", marginBottom: "6px" }}>
+                  Màu sắc nhận diện
+                </label>
+                <div style={{ display: "flex", gap: "10px" }}>
+                  {[
+                    { id: "purple", bg: "#7c3aed" },
+                    { id: "teal", bg: "#0d9488" },
+                    { id: "pink", bg: "#db2777" },
+                    { id: "amber", bg: "#d97706" },
+                    { id: "blue", bg: "#2563eb" },
+                    { id: "green", bg: "#16a34a" },
+                  ].map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setNewClassColor(c.id)}
+                      style={{
+                        width: "32px",
+                        height: "32px",
+                        borderRadius: "50%",
+                        background: c.bg,
+                        border: newClassColor === c.id ? "3px solid #111827" : "2px solid transparent",
+                        cursor: "pointer",
+                        outline: "none",
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "10px" }}>
+                <button
+                  type="button"
+                  disabled={creating}
+                  onClick={() => setShowCreateModal(false)}
+                  style={{
+                    padding: "10px 18px",
+                    borderRadius: "10px",
+                    border: "1px solid #d1d5db",
+                    background: "#ffffff",
+                    fontSize: "13px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  disabled={creating}
+                  style={{
+                    padding: "10px 20px",
+                    borderRadius: "10px",
+                    border: "none",
+                    background: "linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)",
+                    color: "#ffffff",
+                    fontSize: "13px",
+                    fontWeight: 750,
+                    cursor: creating ? "wait" : "pointer",
+                    boxShadow: "0 2px 8px rgba(124, 58, 237, 0.3)",
+                  }}
+                >
+                  {creating ? "Đang tạo..." : "Mở lớp ngay"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

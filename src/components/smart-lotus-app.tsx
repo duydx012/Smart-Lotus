@@ -32,11 +32,12 @@ import AssignmentBuilder from "./assignment-builder";
 import TeacherOverview from "./teacher-overview";
 import PlacementSurvey from "./placement-survey";
 import StudentClassrooms from "./student-classrooms";
+import AiQuestionGenerator from "./ai-question-generator";
 import type { Assignment } from "@/lib/assignment-data";
 import { studentThemes } from "@/lib/student-data";
 
 type StudentView = "home" | "classrooms" | "extra_classes" | "exercises" | "roadmap" | "compete" | "achievements";
-type TeacherView = "overview" | "classes" | "assignments" | "extra_classes";
+type TeacherView = "overview" | "classes" | "assignments" | "extra_classes" | "ai_questions";
 type AdminView = "overview" | "users" | "content" | "data" | "config";
 type Screen = "app" | "quiz" | "result" | "survey" | "guide";
 type AuthMode = "login" | "register";
@@ -1158,6 +1159,28 @@ export default function SmartLotusApp() {
                   </span>
                 )}
               </button>
+              <button
+                className={`nav-item ${teacherView === "ai_questions" ? "active" : ""}`}
+                onClick={() => { setTeacherView("ai_questions"); setMobileOpen(false); }}
+              >
+                <Icon name="wand" />
+                <span>Tạo câu hỏi AI</span>
+                <span
+                  style={{
+                    marginLeft: "auto",
+                    background: "#f3e8ff",
+                    color: "#9333ea",
+                    fontSize: "10px",
+                    fontWeight: 800,
+                    padding: "2px 8px",
+                    borderRadius: "999px",
+                    letterSpacing: "0.5px",
+                    boxShadow: "0 1px 3px rgba(147, 51, 234, 0.12)",
+                  }}
+                >
+                  SỚM
+                </span>
+              </button>
             </>
           ) : (
             <>
@@ -1213,6 +1236,8 @@ export default function SmartLotusApp() {
                     ? "Lớp học"
                     : teacherView === "extra_classes"
                     ? "Lớp học thêm"
+                    : teacherView === "ai_questions"
+                    ? "Tạo câu hỏi AI"
                     : "Bài tập"
                   : "Quản trị hệ thống"}
               </strong>
@@ -1405,6 +1430,11 @@ export default function SmartLotusApp() {
                 onToast={setToast}
                 targetClassId={targetFeedClassId}
                 targetPostId={targetFeedPostId}
+              />
+            ) : teacherView === "ai_questions" ? (
+              <AiQuestionGenerator
+                onToast={setToast}
+                onGoToAssignments={() => setTeacherView("assignments")}
               />
             ) : (
               <AssignmentBuilder onBack={() => setTeacherView("overview")} onToast={setToast} />

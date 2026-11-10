@@ -12,6 +12,8 @@ function validClassroomInput(body: unknown): body is {
   subject: string;
   description: string;
   color: string;
+  isExtra?: boolean;
+  schedule?: string;
 } {
   if (!body || typeof body !== "object") return false;
   const value = body as Record<string, unknown>;
@@ -27,8 +29,18 @@ export async function GET(request: Request) {
   if (!authUser) return Response.json({ message: "Vui lòng đăng nhập" }, { status: 401 });
 
   try {
+    const { searchParams } = new URL(request.url);
+    const type = searchParams.get("type"); // "regular" | "extra" | "all"
     const user = await getOrCreateAppUser(authUser);
+
     if (user.role === "teacher" || user.role === "admin") {
+      let whereFilter = eq(classrooms.teacherId, user.id);
+      if (type === "regular") {
+        whereFilter = and(eq(classrooms.teacherId, user.id), eq(classrooms.isExtra, false)) as any;
+      } else if (type === "extra") {
+        whereFilter = and(eq(classrooms.teacherId, user.id), eq(classrooms.isExtra, true)) as any;
+      }
+
       const rows = await db
         .select({
           id: classrooms.id,
@@ -38,19 +50,35 @@ export async function GET(request: Request) {
           description: classrooms.description,
           color: classrooms.color,
           joinCode: classrooms.joinCode,
+          isExtra: classrooms.isExtra,
+          schedule: classrooms.schedule,
           studentCount: classroomMemberships.id,
         })
         .from(classrooms)
         .leftJoin(classroomMemberships, eq(classroomMemberships.classroomId, classrooms.id))
-        .where(eq(classrooms.teacherId, user.id))
+        .where(whereFilter)
         .orderBy(asc(classrooms.createdAt));
+
       const grouped = new Map<number, (typeof rows)[number] & { studentCount: number }>();
       for (const row of rows) {
         const existing = grouped.get(row.id);
         if (existing) existing.studentCount += row.studentCount === null ? 0 : 1;
         else grouped.set(row.id, { ...row, studentCount: row.studentCount === null ? 0 : 1 });
       }
-      return Response.json({ classrooms: [...grouped.values()].map(({ studentCount, ...item }) => ({ ...item, id: String(item.id), studentCount })) });
+      return Response.json({
+        classrooms: [...grouped.values()].map(({ studentCount, ...item }) => ({
+          ...item,
+          id: String(item.id),
+          studentCount,
+        })),
+      });
+    }
+
+    let studentWhere = eq(classroomMemberships.studentId, user.id);
+    if (type === "regular") {
+      studentWhere = and(eq(classroomMemberships.studentId, user.id), eq(classrooms.isExtra, false)) as any;
+    } else if (type === "extra") {
+      studentWhere = and(eq(classroomMemberships.studentId, user.id), eq(classrooms.isExtra, true)) as any;
     }
 
     const memberships = await db
@@ -61,14 +89,17 @@ export async function GET(request: Request) {
         subject: classrooms.subject,
         description: classrooms.description,
         color: classrooms.color,
+        isExtra: classrooms.isExtra,
+        schedule: classrooms.schedule,
         teacherName: users.displayName,
         joinedAt: classroomMemberships.joinedAt,
       })
       .from(classroomMemberships)
       .innerJoin(classrooms, eq(classroomMemberships.classroomId, classrooms.id))
       .innerJoin(users, eq(classrooms.teacherId, users.id))
-      .where(eq(classroomMemberships.studentId, user.id))
+      .where(studentWhere)
       .orderBy(asc(classrooms.name));
+
     return Response.json({ classrooms: memberships.map((item) => ({ ...item, id: String(item.id) })) });
   } catch (error) {
     console.error("Load classrooms error", error);
@@ -88,6 +119,9 @@ export async function POST(request: Request) {
     const body: unknown = await request.json();
     if (!validClassroomInput(body)) return Response.json({ message: "Thông tin lớp học không hợp lệ" }, { status: 400 });
 
+    const isExtra = Boolean(body.isExtra);
+    const schedule = typeof body.schedule === "string" ? body.schedule.trim().slice(0, 120) : null;
+
     const [created] = await db
       .insert(classrooms)
       .values({
@@ -98,6 +132,8 @@ export async function POST(request: Request) {
         description: body.description.trim(),
         color: body.color,
         joinCode: randomBytes(5).toString("hex").toUpperCase(),
+        isExtra,
+        schedule,
       })
       .returning();
     return Response.json({ classroom: { ...created, id: String(created.id), studentCount: 0 } }, { status: 201 });
@@ -122,15 +158,23 @@ export async function PATCH(request: Request) {
     if (!validClassroomInput(value) || !Number.isSafeInteger(id) || id < 1) {
       return Response.json({ message: "Thông tin lớp học không hợp lệ" }, { status: 400 });
     }
+    const updateData: Record<string, unknown> = {
+      name: value.name.trim(),
+      label: value.label.trim().toUpperCase(),
+      subject: value.subject.trim(),
+      description: value.description.trim(),
+      color: value.color,
+    };
+    if (value.isExtra !== undefined) {
+      updateData.isExtra = Boolean(value.isExtra);
+    }
+    if (value.schedule !== undefined) {
+      updateData.schedule = typeof value.schedule === "string" ? value.schedule.trim().slice(0, 120) : null;
+    }
+
     const [updated] = await db
       .update(classrooms)
-      .set({
-        name: value.name.trim(),
-        label: value.label.trim().toUpperCase(),
-        subject: value.subject.trim(),
-        description: value.description.trim(),
-        color: value.color,
-      })
+      .set(updateData)
       .where(and(eq(classrooms.id, id), eq(classrooms.teacherId, user.id)))
       .returning();
     if (!updated) return Response.json({ message: "Không tìm thấy lớp học" }, { status: 404 });

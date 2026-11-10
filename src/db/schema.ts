@@ -92,6 +92,8 @@ export const classrooms = pgTable(
     description: varchar("description", { length: 500 }).notNull().default(""),
     color: varchar("color", { length: 20 }).notNull().default("purple"),
     joinCode: varchar("join_code", { length: 12 }).notNull().unique(),
+    isExtra: boolean("is_extra").notNull().default(false),
+    schedule: varchar("schedule", { length: 120 }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [uniqueIndex("classrooms_teacher_label_idx").on(table.teacherId, table.label)],

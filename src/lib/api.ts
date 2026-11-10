@@ -95,6 +95,7 @@ export type ExtraClassroom = {
   description: string;
   color: string;
   studentCount: number;
+  schedule?: string;
   membershipStatus: "joined" | "not_joined";
   requestStatus: "pending" | "accepted" | "declined" | "none";
   invitationId?: string;
@@ -248,13 +249,14 @@ export const smartLotusApi = {
       body: JSON.stringify(payload),
     });
   },
-  getClassrooms() {
-    return request<{ classrooms: Classroom[] }>("/api/classrooms");
+  getClassrooms(type: "regular" | "extra" | "all" = "all") {
+    const query = type && type !== "all" ? `?type=${type}` : "";
+    return request<{ classrooms: Classroom[] }>(`/api/classrooms${query}`);
   },
   getClassroom(classroomId: string) {
     return request<ClassroomDetails>(`/api/classrooms/${encodeURIComponent(classroomId)}`);
   },
-  createClassroom(classroom: Omit<Classroom, "id" | "joinCode" | "teacherName" | "studentCount">) {
+  createClassroom(classroom: Omit<Classroom, "id" | "joinCode" | "teacherName" | "studentCount"> & { isExtra?: boolean; schedule?: string }) {
     return request<{ classroom: Classroom }>("/api/classrooms", {
       method: "POST",
       body: JSON.stringify(classroom),

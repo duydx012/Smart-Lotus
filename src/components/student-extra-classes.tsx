@@ -325,6 +325,27 @@ export default function StudentExtraClasses({ onToast }: { onToast: (msg: string
                             </p>
                           )}
 
+                          {cls.schedule && (
+                            <div
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                padding: "4px 9px",
+                                background: "#faf5ff",
+                                border: "1px solid #e9d5ff",
+                                color: "#7c3aed",
+                                borderRadius: "8px",
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                margin: "3px 0 8px",
+                              }}
+                            >
+                              <Icon name="clock" size={13} />
+                              <span>{cls.schedule}</span>
+                            </div>
+                          )}
+
                           <div style={{ fontSize: "11px", color: "#6b7280", display: "flex", alignItems: "center", gap: "5px" }}>
                             <Icon name="users" size={13} />
                             <span>Sĩ số: {cls.studentCount} học sinh</span>

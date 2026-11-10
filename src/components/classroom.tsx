@@ -19,7 +19,7 @@ export default function Classroom() {
 
   useEffect(() => {
     let active = true;
-    void smartLotusApi.getClassrooms().then(({ classrooms: items }) => {
+    void smartLotusApi.getClassrooms("regular").then(({ classrooms: items }) => {
       if (!active) return;
       setClassrooms(items);
       setError("");
