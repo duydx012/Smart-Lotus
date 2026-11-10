@@ -24,18 +24,32 @@ export default function ClassroomQrModal({ classroom, onClose, onToast }: Classr
   const [copiedLink, setCopiedLink] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [origin, setOrigin] = useState("");
+  const [customHost, setCustomHost] = useState("");
+  const [showNetworkSettings, setShowNetworkSettings] = useState(false);
 
   const joinCode = classroom.joinCode || classroom.label;
 
   useEffect(() => {
     if (typeof window !== "undefined") {
       setOrigin(window.location.origin);
+      const savedHost = localStorage.getItem("smartlotus_qr_host");
+      if (savedHost) {
+        setCustomHost(savedHost);
+      }
     }
   }, []);
 
-  const joinUrl = origin
-    ? `${origin}/?joinCode=${encodeURIComponent(joinCode)}`
-    : `https://smartlotus.edu.vn/?joinCode=${encodeURIComponent(joinCode)}`;
+  const isLocalhost = Boolean(
+    origin && (origin.includes("localhost") || origin.includes("127.0.0.1"))
+  );
+
+  const effectiveOrigin = customHost.trim()
+    ? (customHost.startsWith("http://") || customHost.startsWith("https://")
+        ? customHost.trim()
+        : `http://${customHost.trim()}`)
+    : (origin || "https://smartlotus.edu.vn");
+
+  const joinUrl = `${effectiveOrigin}/?joinCode=${encodeURIComponent(joinCode)}`;
 
   // Generate standard QR Code (Level M - 15% error correction, perfectly readable by all devices)
   const qr = generateQrMatrix(joinUrl, "M");
@@ -282,6 +296,96 @@ export default function ClassroomQrModal({ classroom, onClose, onToast }: Classr
             <span>📷 Quét bằng camera để vào lớp ngay</span>
           </div>
         </div>
+
+        {/* Hướng dẫn khi máy chạy ở localhost */}
+        {isLocalhost && (
+          <div
+            style={{
+              background: "#fffbeb",
+              border: "1px solid #fef3c7",
+              borderRadius: "12px",
+              padding: "8px 12px",
+              marginBottom: "12px",
+              textAlign: "left",
+              fontSize: "11px",
+              color: "#92400e",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px" }}>
+              <span>⚠️ <strong>Đang chạy localhost ({origin})</strong></span>
+              <button
+                type="button"
+                onClick={() => setShowNetworkSettings((prev) => !prev)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#b45309",
+                  fontWeight: 700,
+                  textDecoration: "underline",
+                  cursor: "pointer",
+                  fontSize: "11px",
+                }}
+              >
+                {showNetworkSettings ? "Đóng" : "Quét bằng điện thoại?"}
+              </button>
+            </div>
+            <p style={{ margin: "3px 0 0", color: "#78350f", lineHeight: "1.35", fontSize: "10.5px" }}>
+              Điện thoại quét trực tiếp sẽ bị lỗi <em>&quot;Từ chối kết nối&quot;</em> vì điện thoại không hiểu localhost của máy tính.
+            </p>
+
+            {showNetworkSettings && (
+              <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px dashed #fcd34d" }}>
+                <label style={{ display: "block", fontWeight: 700, fontSize: "10.5px", marginBottom: "4px" }}>
+                  Đổi sang IP Wi-Fi của máy tính (hoặc domain online):
+                </label>
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <input
+                    type="text"
+                    placeholder="VD: 192.168.1.184:3000"
+                    value={customHost}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCustomHost(val);
+                      if (typeof window !== "undefined") {
+                        localStorage.setItem("smartlotus_qr_host", val);
+                      }
+                    }}
+                    style={{
+                      flex: 1,
+                      fontSize: "11.5px",
+                      padding: "4px 8px",
+                      border: "1px solid #d97706",
+                      borderRadius: "6px",
+                      background: "#ffffff",
+                    }}
+                  />
+                  {customHost && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomHost("");
+                        localStorage.removeItem("smartlotus_qr_host");
+                      }}
+                      style={{
+                        fontSize: "10.5px",
+                        padding: "3px 8px",
+                        borderRadius: "6px",
+                        border: "1px solid #d1d5db",
+                        background: "#ffffff",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Đặt lại
+                    </button>
+                  )}
+                </div>
+                <span style={{ fontSize: "10px", color: "#b45309", display: "block", marginTop: "4px" }}>
+                  💡 Gợi ý: Dùng nút <strong>&quot;Quét mã QR&quot;</strong> có sẵn trong tài khoản học sinh trên máy tính là vào được ngay không cần đổi IP.
+                </span>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Ô hiển thị Mã lớp dạng số to */}
         <div
