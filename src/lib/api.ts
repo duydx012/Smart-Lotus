@@ -142,6 +142,71 @@ export type StudentClassroomRequest = {
   };
 };
 
+export type ClassroomFeedComment = {
+  id: number;
+  postId: number;
+  authorId: number;
+  authorName: string;
+  authorAvatar: string;
+  authorAvatarUrl?: string | null;
+  authorRole: string;
+  content: string;
+  createdAt: string;
+};
+
+export type ClassroomFeedPost = {
+  id: number;
+  classroomId: number;
+  authorId: number;
+  authorName: string;
+  authorAvatar: string;
+  authorAvatarUrl?: string | null;
+  authorRole: string;
+  title?: string | null;
+  content: string;
+  category: "announcement" | "qa" | "challenge" | "material" | string;
+  attachmentUrl?: string | null;
+  attachmentName?: string | null;
+  isPinned: boolean;
+  likesCount: number;
+  createdAt: string;
+  comments: ClassroomFeedComment[];
+};
+
+export type ClassroomMaterialItem = {
+  id: number;
+  classroomId: number;
+  teacherId: number;
+  teacherName: string;
+  teacherAvatar: string;
+  title: string;
+  description?: string | null;
+  category: "document" | "exam_prep" | "tips" | "video" | string;
+  fileUrl?: string | null;
+  fileName?: string | null;
+  fileSize?: string | null;
+  isExclusive: boolean;
+  downloadCount: number;
+  createdAt: string;
+};
+
+export type ClassroomActivityNotification = {
+  id: string;
+  recipientId: number;
+  senderId: number;
+  senderName: string;
+  senderAvatar: string;
+  senderRole: string;
+  classroomId: number;
+  classroomName: string;
+  type: "feed_comment" | "join_request" | "new_post" | "new_material" | string;
+  title: string;
+  content: string;
+  linkId?: number | null;
+  isRead: boolean;
+  createdAt: string;
+};
+
 export type AssignmentProject = {
   id: string;
   name: string;
@@ -279,6 +344,55 @@ export const smartLotusApi = {
     return request<{ ok: true; status: string; message: string }>(`/api/classroom-requests/${encodeURIComponent(String(requestId))}`, {
       method: "PATCH",
       body: JSON.stringify({ decision }),
+    });
+  },
+  getClassroomFeed(classroomId: string | number) {
+    return request<{ classroom: { id: string; name: string; label: string; subject: string; teacherId: number }; posts: ClassroomFeedPost[] }>(
+      `/api/classrooms/${encodeURIComponent(String(classroomId))}/feed`
+    );
+  },
+  createClassroomPost(classroomId: string | number, payload: { title?: string; content: string; category?: string; attachmentUrl?: string; attachmentName?: string; isPinned?: boolean }) {
+    return request<{ ok: true; message: string; post: ClassroomFeedPost }>(
+      `/api/classrooms/${encodeURIComponent(String(classroomId))}/feed`,
+      { method: "POST", body: JSON.stringify(payload) }
+    );
+  },
+  createClassroomComment(classroomId: string | number, postId: number | string, content: string) {
+    return request<{ ok: true; message: string; comment: ClassroomFeedComment }>(
+      `/api/classrooms/${encodeURIComponent(String(classroomId))}/feed/${encodeURIComponent(String(postId))}/comments`,
+      { method: "POST", body: JSON.stringify({ content }) }
+    );
+  },
+  likeClassroomPost(classroomId: string | number, postId: number | string) {
+    return request<{ ok: true; likesCount: number }>(
+      `/api/classrooms/${encodeURIComponent(String(classroomId))}/feed/${encodeURIComponent(String(postId))}/like`,
+      { method: "POST" }
+    );
+  },
+  getClassroomMaterials(classroomId: string | number) {
+    return request<{ classroom: { id: string; name: string; label: string; subject: string }; materials: ClassroomMaterialItem[] }>(
+      `/api/classrooms/${encodeURIComponent(String(classroomId))}/materials`
+    );
+  },
+  createClassroomMaterial(classroomId: string | number, payload: { title: string; description?: string; category?: string; fileUrl?: string; fileName?: string; fileSize?: string; isExclusive?: boolean }) {
+    return request<{ ok: true; message: string; material: ClassroomMaterialItem }>(
+      `/api/classrooms/${encodeURIComponent(String(classroomId))}/materials`,
+      { method: "POST", body: JSON.stringify(payload) }
+    );
+  },
+  deleteClassroomMaterial(classroomId: string | number, materialId: number | string) {
+    return request<{ ok: true; message: string }>(
+      `/api/classrooms/${encodeURIComponent(String(classroomId))}/materials?materialId=${encodeURIComponent(String(materialId))}`,
+      { method: "DELETE" }
+    );
+  },
+  getClassroomNotifications() {
+    return request<{ notifications: ClassroomActivityNotification[]; unreadCount: number }>("/api/classroom-notifications");
+  },
+  markClassroomNotificationRead(notificationId?: string | number, markAll?: boolean) {
+    return request<{ ok: true; message?: string }>("/api/classroom-notifications", {
+      method: "PATCH",
+      body: JSON.stringify({ notificationId, markAll }),
     });
   },
   getAssignments() {

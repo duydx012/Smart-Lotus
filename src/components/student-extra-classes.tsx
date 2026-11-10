@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Icon } from "./icons";
 import { smartLotusApi, type ExtraClassTeacher } from "@/lib/api";
+import ClassroomFeedView from "./classroom-feed-view";
 
 export default function StudentExtraClasses({ onToast }: { onToast: (msg: string) => void }) {
   const [teachers, setTeachers] = useState<ExtraClassTeacher[]>([]);
@@ -10,6 +11,13 @@ export default function StudentExtraClasses({ onToast }: { onToast: (msg: string
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [requestingClassId, setRequestingClassId] = useState<string | null>(null);
+  const [selectedClassHub, setSelectedClassHub] = useState<{
+    id: string;
+    name: string;
+    label: string;
+    subject: string;
+    teacherName: string;
+  } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -68,6 +76,21 @@ export default function StudentExtraClasses({ onToast }: { onToast: (msg: string
     );
     return matchName || matchEmail || matchSchool || matchClass;
   });
+
+  if (selectedClassHub) {
+    return (
+      <ClassroomFeedView
+        classroomId={selectedClassHub.id}
+        classroomName={selectedClassHub.name}
+        classroomLabel={selectedClassHub.label}
+        subject={selectedClassHub.subject}
+        teacherName={selectedClassHub.teacherName}
+        currentRole="student"
+        onBack={() => setSelectedClassHub(null)}
+        onToast={onToast}
+      />
+    );
+  }
 
   return (
     <div className="view-stack extra-classes-view">
@@ -311,24 +334,37 @@ export default function StudentExtraClasses({ onToast }: { onToast: (msg: string
                         {/* Nút hành động hoặc trạng thái */}
                         <div style={{ paddingTop: "8px", borderTop: "1px dashed #e5e7eb" }}>
                           {isJoined ? (
-                            <div
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSelectedClassHub({
+                                  id: cls.id,
+                                  name: cls.name,
+                                  label: cls.label,
+                                  subject: cls.subject,
+                                  teacherName: teacher.displayName,
+                                })
+                              }
                               style={{
                                 display: "inline-flex",
                                 alignItems: "center",
                                 gap: "6px",
-                                fontSize: "11.5px",
+                                fontSize: "12px",
                                 fontWeight: 750,
-                                color: "#15803d",
-                                background: "#dcfce7",
-                                padding: "5px 12px",
+                                color: "#ffffff",
+                                background: "linear-gradient(135deg, #16a34a 0%, #15803d 100%)",
+                                padding: "7px 12px",
                                 borderRadius: "8px",
                                 width: "100%",
                                 justifyContent: "center",
+                                border: "none",
+                                cursor: "pointer",
+                                boxShadow: "0 2px 6px rgba(22, 163, 74, 0.25)",
                               }}
                             >
-                              <Icon name="check" size={14} />
-                              <span>Đã tham gia lớp</span>
-                            </div>
+                              <Icon name="sparkles" size={14} />
+                              <span>Vào Bảng Tin & Tài Liệu Lớp</span>
+                            </button>
                           ) : isPending ? (
                             <div
                               style={{

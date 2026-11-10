@@ -5,7 +5,7 @@ import { Icon, type IconName, LotusLogo, LotusMascot } from "./icons";
 import { curriculum, difficultyMeta, questions, type QuizQuestion, type SurveyQuestion } from "@/lib/learning-data";
 import { adminMetrics } from "@/lib/role-data";
 import { calculateQuestionScore, calculateQuizScore, formatDuration } from "@/lib/scoring";
-import { smartLotusApi, type AttemptPayload, type ClassroomInvitation, type DashboardData, type LessonRecord, type Role, type StudentClassroomRequest } from "@/lib/api";
+import { smartLotusApi, type AttemptPayload, type ClassroomActivityNotification, type ClassroomInvitation, type DashboardData, type LessonRecord, type Role, type StudentClassroomRequest } from "@/lib/api";
 import StudentExtraClasses from "./student-extra-classes";
 import TeacherExtraClasses from "./teacher-extra-classes";
 import StudentRequestModal from "./student-request-modal";
@@ -321,6 +321,9 @@ export default function SmartLotusApp() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [classroomInvitations, setClassroomInvitations] = useState<ClassroomInvitation[]>([]);
   const [teacherRequests, setTeacherRequests] = useState<StudentClassroomRequest[]>([]);
+  const [activityNotifications, setActivityNotifications] = useState<ClassroomActivityNotification[]>([]);
+  const [targetFeedClassId, setTargetFeedClassId] = useState<string | number | null>(null);
+  const [targetFeedPostId, setTargetFeedPostId] = useState<number | null>(null);
   const [selectedRequestModal, setSelectedRequestModal] = useState<StudentClassroomRequest | null>(null);
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -386,15 +389,30 @@ export default function SmartLotusApp() {
 
   const fetchTeacherRequests = useCallback(async () => {
     try {
-      const { requests } = await smartLotusApi.getClassroomRequests();
+      const [{ requests }, notifData] = await Promise.all([
+        smartLotusApi.getClassroomRequests().catch(() => ({ requests: [] })),
+        smartLotusApi.getClassroomNotifications().catch(() => ({ notifications: [], unreadCount: 0 })),
+      ]);
+
       setTeacherRequests(requests);
+      setActivityNotifications(notifData.notifications || []);
+
       const pending = requests.filter((r) => r.status === "pending");
       if (pending.some((r) => !knownTeacherRequests.current.has(r.id))) {
         setToast("Có học sinh gửi yêu cầu xin vào lớp học thêm mới!");
       }
-      knownTeacherRequests.current = new Set(requests.map((r) => r.id));
+
+      const unreadComments = (notifData.notifications || []).filter((n) => !n.isRead && n.type === "feed_comment");
+      if (unreadComments.some((n) => !knownTeacherRequests.current.has(`notif-${n.id}`))) {
+        setToast("Có học sinh vừa phản hồi trên bảng tin lớp học thêm!");
+      }
+
+      knownTeacherRequests.current = new Set([
+        ...requests.map((r) => r.id),
+        ...(notifData.notifications || []).map((n) => `notif-${n.id}`),
+      ]);
     } catch (error) {
-      console.error("Check classroom requests error", error);
+      console.error("Check classroom requests and notifications error", error);
     }
   }, []);
 
@@ -1210,7 +1228,7 @@ export default function SmartLotusApp() {
             <div className="notification-wrap">
               <button
                 className="icon-button notification-button"
-                aria-label={role === "student" ? "Thông báo lời mời vào lớp" : "Thông báo yêu cầu học sinh"}
+                aria-label={role === "student" ? "Thông báo lời mời vào lớp" : "Thông báo yêu cầu học sinh & hoạt động lớp"}
                 aria-expanded={notificationsOpen}
                 aria-haspopup="dialog"
                 onClick={() => {
@@ -1220,7 +1238,9 @@ export default function SmartLotusApp() {
               >
                 <Icon name="bell" />
                 {((role === "student" && classroomInvitations.length > 0) ||
-                  (role === "teacher" && teacherRequests.filter((r) => r.status === "pending").length > 0)) && <span />}
+                  (role === "teacher" &&
+                    (teacherRequests.filter((r) => r.status === "pending").length > 0 ||
+                      activityNotifications.filter((n) => !n.isRead).length > 0))) && <span />}
               </button>
               {notificationsOpen && (
                 <div className="notification-panel" role="dialog" aria-label="Thông báo">
@@ -1229,9 +1249,15 @@ export default function SmartLotusApp() {
                     {role === "student" && classroomInvitations.length > 0 && (
                       <span>{classroomInvitations.length} mới</span>
                     )}
-                    {role === "teacher" && teacherRequests.filter((r) => r.status === "pending").length > 0 && (
-                      <span>{teacherRequests.filter((r) => r.status === "pending").length} mới</span>
-                    )}
+                    {role === "teacher" &&
+                      teacherRequests.filter((r) => r.status === "pending").length +
+                        activityNotifications.filter((n) => !n.isRead).length > 0 && (
+                        <span>
+                          {teacherRequests.filter((r) => r.status === "pending").length +
+                            activityNotifications.filter((n) => !n.isRead).length}{" "}
+                          mới
+                        </span>
+                      )}
                   </div>
                   {role === "student" && classroomInvitations.length > 0 ? (
                     <div className="notification-list">
@@ -1255,12 +1281,47 @@ export default function SmartLotusApp() {
                         </button>
                       ))}
                     </div>
-                  ) : role === "teacher" && teacherRequests.filter((r) => r.status === "pending").length > 0 ? (
+                  ) : role === "teacher" &&
+                    (activityNotifications.length > 0 || teacherRequests.filter((r) => r.status === "pending").length > 0) ? (
                     <div className="notification-list">
+                      {/* 1. THÔNG BÁO BÌNH LUẬN TRÊN BẢNG TIN */}
+                      {activityNotifications.map((notif) => (
+                        <button
+                          className={`notification-item ${!notif.isRead ? "unread" : ""}`}
+                          key={`act-${notif.id}`}
+                          onClick={() => {
+                            void smartLotusApi.markClassroomNotificationRead(notif.id);
+                            setActivityNotifications((prev) =>
+                              prev.map((n) => (n.id === notif.id ? { ...n, isRead: true } : n))
+                            );
+                            setTeacherView("extra_classes");
+                            setTargetFeedClassId(notif.classroomId);
+                            setTargetFeedPostId(notif.linkId || null);
+                            setNotificationsOpen(false);
+                            setToast("Đang mở bài viết trên bảng tin lớp...");
+                          }}
+                        >
+                          <i className="notification-item-dot" style={{ background: "#8b5cf6" }} />
+                          <span className="notification-item-copy">
+                            <strong style={{ color: "#6d28d9" }}>💬 {notif.title}</strong>
+                            <small style={{ color: "#374151" }}>{notif.content}</small>
+                            <time dateTime={notif.createdAt}>
+                              {new Intl.DateTimeFormat("vi-VN", {
+                                day: "numeric",
+                                month: "short",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              }).format(new Date(notif.createdAt))}
+                            </time>
+                          </span>
+                        </button>
+                      ))}
+
+                      {/* 2. THÔNG BÁO HỌC SINH XIN VÀO LỚP */}
                       {teacherRequests.filter((r) => r.status === "pending").map((req) => (
                         <button
                           className="notification-item unread"
-                          key={req.id}
+                          key={`req-${req.id}`}
                           onClick={() => {
                             setSelectedRequestModal(req);
                             setNotificationsOpen(false);
@@ -1268,7 +1329,7 @@ export default function SmartLotusApp() {
                         >
                           <i className="notification-item-dot" />
                           <span className="notification-item-copy">
-                            <strong>{req.student.displayName} xin vào lớp</strong>
+                            <strong>👤 {req.student.displayName} xin vào lớp</strong>
                             <small>Lớp {req.classroom.name} · Mã HS: {req.student.studentCode}</small>
                             <time dateTime={req.createdAt}>
                               {new Intl.DateTimeFormat("vi-VN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(req.createdAt))}
@@ -1342,6 +1403,8 @@ export default function SmartLotusApp() {
                 onRefresh={fetchTeacherRequests}
                 onOpenDetail={setSelectedRequestModal}
                 onToast={setToast}
+                targetClassId={targetFeedClassId}
+                targetPostId={targetFeedPostId}
               />
             ) : (
               <AssignmentBuilder onBack={() => setTeacherView("overview")} onToast={setToast} />

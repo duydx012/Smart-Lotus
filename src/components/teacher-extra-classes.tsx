@@ -3,20 +3,46 @@
 import { useEffect, useState } from "react";
 import { Icon } from "./icons";
 import { smartLotusApi, type StudentClassroomRequest } from "@/lib/api";
+import type { Classroom } from "@/lib/student-data";
+import ClassroomFeedView from "./classroom-feed-view";
 
 export default function TeacherExtraClasses({
   requests,
   onRefresh,
   onOpenDetail,
   onToast,
+  targetClassId,
+  targetPostId,
 }: {
   requests: StudentClassroomRequest[];
   onRefresh: () => void;
   onOpenDetail: (request: StudentClassroomRequest) => void;
   onToast: (msg: string) => void;
+  targetClassId?: string | number | null;
+  targetPostId?: number | null;
 }) {
+  const [mainTab, setMainTab] = useState<"feed" | "requests">(targetPostId ? "feed" : "feed");
+  const [classrooms, setClassrooms] = useState<Classroom[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState<string>("");
   const [filter, setFilter] = useState<"all" | "pending" | "accepted" | "declined">("pending");
   const [processingId, setProcessingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void smartLotusApi.getClassrooms().then(({ classrooms: items }) => {
+      if (!active) return;
+      setClassrooms(items);
+      if (targetClassId) {
+        setSelectedClassId(String(targetClassId));
+      } else if (items.length > 0 && !selectedClassId) {
+        setSelectedClassId(String(items[0].id));
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [targetClassId]);
 
   const pendingCount = requests.filter((r) => r.status === "pending").length;
   const acceptedCount = requests.filter((r) => r.status === "accepted").length;
@@ -26,6 +52,8 @@ export default function TeacherExtraClasses({
     if (filter === "all") return true;
     return r.status === filter;
   });
+
+  const activeClassroom = classrooms.find((c) => String(c.id) === String(selectedClassId));
 
   async function handleQuickRespond(requestId: string, decision: "accepted" | "declined", studentName: string, className: string) {
     setProcessingId(requestId);
@@ -41,321 +69,446 @@ export default function TeacherExtraClasses({
   }
 
   return (
-    <div className="view-stack teacher-extra-classes-view">
-      <section className="page-intro">
-        <div>
-          <span className="eyebrow purple">
-            <Icon name="school" size={15} /> QUẢN LÝ LỚP HỌC THÊM & DUYỆT HỌC SINH
-          </span>
-          <h1>Yêu cầu tham gia lớp học</h1>
-          <p>
-            Xem và phê duyệt các học sinh gửi yêu cầu xin vào lớp học thêm của bạn. Khi được duyệt, học sinh sẽ nhận được toàn bộ bài tập của lớp.
-          </p>
-        </div>
-
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={onRefresh}
-          style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
-        >
-          <Icon name="check" size={14} /> Làm mới danh sách
-        </button>
-      </section>
-
-      {/* Bộ lọc tab */}
+    <div className="view-stack teacher-extra-classes-view" style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      {/* Thanh chuyển tab lớn: Bảng tin & Tài liệu vs Duyệt học sinh */}
       <div
         style={{
           display: "flex",
-          gap: "8px",
-          background: "#f3e8ff",
-          padding: "4px",
-          borderRadius: "12px",
-          width: "fit-content",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "12px",
+          background: "#ffffff",
+          padding: "12px 18px",
+          borderRadius: "16px",
+          border: "1.5px solid #e9d5ff",
+          boxShadow: "0 4px 14px rgba(124, 58, 237, 0.05)",
         }}
       >
-        <button
-          type="button"
-          onClick={() => setFilter("pending")}
-          style={{
-            border: "none",
-            background: filter === "pending" ? "#ffffff" : "transparent",
-            color: filter === "pending" ? "#6d28d9" : "#7c3aed",
-            fontWeight: 750,
-            fontSize: "12px",
-            padding: "6px 14px",
-            borderRadius: "9px",
-            cursor: "pointer",
-            boxShadow: filter === "pending" ? "0 2px 6px rgba(124, 58, 237, 0.1)" : "none",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "6px",
-          }}
-        >
-          <span>Chờ phê duyệt</span>
-          {pendingCount > 0 && (
-            <span
-              style={{
-                background: "#ef4444",
-                color: "#ffffff",
-                fontSize: "10px",
-                padding: "1px 6px",
-                borderRadius: "999px",
-                fontWeight: 800,
-              }}
-            >
-              {pendingCount}
-            </span>
-          )}
-        </button>
+        <div style={{ display: "flex", gap: "10px" }}>
+          <button
+            type="button"
+            onClick={() => setMainTab("feed")}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "10px 18px",
+              borderRadius: "12px",
+              fontSize: "13px",
+              fontWeight: 800,
+              cursor: "pointer",
+              border: mainTab === "feed" ? "1.5px solid #8b5cf6" : "1.5px solid transparent",
+              background: mainTab === "feed" ? "#8b5cf6" : "#f5f3ff",
+              color: mainTab === "feed" ? "#ffffff" : "#6b21a8",
+              boxShadow: mainTab === "feed" ? "0 4px 12px rgba(139, 92, 246, 0.25)" : "none",
+            }}
+          >
+            <Icon name="sparkles" size={15} />
+            <span>Bảng tin & Kho tài liệu độc quyền</span>
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setFilter("accepted")}
-          style={{
-            border: "none",
-            background: filter === "accepted" ? "#ffffff" : "transparent",
-            color: filter === "accepted" ? "#15803d" : "#7c3aed",
-            fontWeight: 750,
-            fontSize: "12px",
-            padding: "6px 14px",
-            borderRadius: "9px",
-            cursor: "pointer",
-            boxShadow: filter === "accepted" ? "0 2px 6px rgba(124, 58, 237, 0.1)" : "none",
-          }}
-        >
-          Đã đồng ý ({acceptedCount})
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setFilter("declined")}
-          style={{
-            border: "none",
-            background: filter === "declined" ? "#ffffff" : "transparent",
-            color: filter === "declined" ? "#b91c1c" : "#7c3aed",
-            fontWeight: 750,
-            fontSize: "12px",
-            padding: "6px 14px",
-            borderRadius: "9px",
-            cursor: "pointer",
-            boxShadow: filter === "declined" ? "0 2px 6px rgba(124, 58, 237, 0.1)" : "none",
-          }}
-        >
-          Đã từ chối ({declinedCount})
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setFilter("all")}
-          style={{
-            border: "none",
-            background: filter === "all" ? "#ffffff" : "transparent",
-            color: filter === "all" ? "#374151" : "#7c3aed",
-            fontWeight: 750,
-            fontSize: "12px",
-            padding: "6px 14px",
-            borderRadius: "9px",
-            cursor: "pointer",
-            boxShadow: filter === "all" ? "0 2px 6px rgba(124, 58, 237, 0.1)" : "none",
-          }}
-        >
-          Tất cả ({requests.length})
-        </button>
-      </div>
-
-      {/* Danh sách yêu cầu */}
-      {filteredRequests.length === 0 ? (
-        <div
-          style={{
-            padding: "40px 20px",
-            textAlign: "center",
-            background: "#ffffff",
-            borderRadius: "18px",
-            border: "1.5px dashed #d8b4fe",
-          }}
-        >
-          <span style={{ fontSize: "32px" }}>🎉</span>
-          <h3 style={{ fontSize: "15px", color: "#581c87", margin: "10px 0 4px" }}>
-            {filter === "pending"
-              ? "Hiện không có yêu cầu nào đang chờ duyệt"
-              : filter === "accepted"
-              ? "Chưa có yêu cầu nào đã đồng ý"
-              : filter === "declined"
-              ? "Chưa có yêu cầu nào bị từ chối"
-              : "Chưa có học sinh nào gửi yêu cầu xin vào lớp"}
-          </h3>
-          <p style={{ fontSize: "12px", color: "#6b7280", margin: 0 }}>
-            Khi học sinh bấm "Xin vào lớp", thông báo và yêu cầu sẽ xuất hiện ngay tại đây.
-          </p>
-        </div>
-      ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "14px" }}>
-          {filteredRequests.map((req) => {
-            const isPending = req.status === "pending";
-            const isAccepted = req.status === "accepted";
-            const isDeclined = req.status === "declined";
-            const isBusy = processingId === req.id;
-
-            return (
-              <div
-                key={req.id}
+          <button
+            type="button"
+            onClick={() => setMainTab("requests")}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "10px 18px",
+              borderRadius: "12px",
+              fontSize: "13px",
+              fontWeight: 800,
+              cursor: "pointer",
+              border: mainTab === "requests" ? "1.5px solid #8b5cf6" : "1.5px solid transparent",
+              background: mainTab === "requests" ? "#8b5cf6" : "#f5f3ff",
+              color: mainTab === "requests" ? "#ffffff" : "#6b21a8",
+              boxShadow: mainTab === "requests" ? "0 4px 12px rgba(139, 92, 246, 0.25)" : "none",
+            }}
+          >
+            <Icon name="users" size={15} />
+            <span>Yêu cầu xin vào lớp</span>
+            {pendingCount > 0 && (
+              <span
                 style={{
-                  background: "#ffffff",
-                  border: `1.5px solid ${isPending ? "#c084fc" : isAccepted ? "#86efac" : "#fca5a5"}`,
-                  borderRadius: "16px",
-                  padding: "16px",
-                  boxShadow: isPending ? "0 4px 14px rgba(168, 85, 247, 0.1)" : "0 2px 6px rgba(0,0,0,0.04)",
-                  display: "flex",
-                  flexDirection: "column",
-                  justifyContent: "space-between",
-                  gap: "12px",
+                  background: mainTab === "requests" ? "#ffffff" : "#ef4444",
+                  color: mainTab === "requests" ? "#ef4444" : "#ffffff",
+                  fontSize: "11px",
+                  fontWeight: 800,
+                  padding: "1px 7px",
+                  borderRadius: "999px",
                 }}
               >
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                      <div
-                        style={{
-                          width: "40px",
-                          height: "40px",
-                          borderRadius: "50%",
-                          background: "linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)",
-                          color: "#ffffff",
-                          fontWeight: 800,
-                          fontSize: "14px",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                        }}
-                      >
-                        {req.student.avatar || req.student.displayName.slice(0, 2).toUpperCase()}
-                      </div>
-                      <div>
-                        <strong style={{ fontSize: "14px", color: "#111827", display: "block" }}>
-                          {req.student.displayName}
-                        </strong>
-                        <span style={{ fontSize: "11px", color: "#7c3aed", fontWeight: 700 }}>
-                          {req.student.studentCode}
-                        </span>
-                      </div>
-                    </div>
+                {pendingCount}
+              </span>
+            )}
+          </button>
+        </div>
 
-                    <span
-                      style={{
-                        fontSize: "10.5px",
-                        fontWeight: 800,
-                        padding: "3px 8px",
-                        borderRadius: "999px",
-                        background: isPending ? "#fef3c7" : isAccepted ? "#dcfce7" : "#fee2e2",
-                        color: isPending ? "#b45309" : isAccepted ? "#15803d" : "#b91c1c",
-                        border: `1px solid ${isPending ? "#fde68a" : isAccepted ? "#86efac" : "#fca5a5"}`,
-                      }}
-                    >
-                      {isPending ? "Chờ duyệt" : isAccepted ? "Đã duyệt" : "Đã từ chối"}
-                    </span>
-                  </div>
+        {/* Dropdown chọn lớp nếu ở tab Feed */}
+        {mainTab === "feed" && classrooms.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ fontSize: "12px", fontWeight: 700, color: "#6b7280" }}>Đang chọn lớp:</span>
+            <select
+              value={selectedClassId}
+              onChange={(e) => setSelectedClassId(e.target.value)}
+              style={{
+                padding: "8px 14px",
+                borderRadius: "10px",
+                border: "1.5px solid #c084fc",
+                fontSize: "13px",
+                fontWeight: 750,
+                color: "#581c87",
+                background: "#faf5ff",
+                outline: "none",
+                cursor: "pointer",
+              }}
+            >
+              {classrooms.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} · {c.label} ({c.studentCount} học sinh)
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
 
+      {/* ===================== TAB BẢNG TIN & TÀI LIỆU ===================== */}
+      {mainTab === "feed" ? (
+        activeClassroom ? (
+          <ClassroomFeedView
+            classroomId={activeClassroom.id}
+            classroomName={activeClassroom.name}
+            classroomLabel={activeClassroom.label}
+            subject={activeClassroom.subject}
+            teacherName="Bạn (Giáo viên phụ trách)"
+            currentRole="teacher"
+            onToast={onToast}
+            initialPostId={targetPostId}
+          />
+        ) : (
+          <div
+            style={{
+              padding: "40px",
+              textAlign: "center",
+              background: "#faf5ff",
+              borderRadius: "18px",
+              border: "1.5px dashed #d8b4fe",
+              color: "#6b7280",
+            }}
+          >
+            <span style={{ fontSize: "36px" }}>🏫</span>
+            <h3 style={{ color: "#581c87", margin: "10px 0 4px" }}>Bạn chưa có lớp học nào</h3>
+            <p style={{ margin: 0, fontSize: "13px" }}>
+              Vui lòng vào mục "Lớp học" để tạo lớp học thêm trước, sau đó bảng tin và kho tài liệu sẽ sẵn sàng!
+            </p>
+          </div>
+        )
+      ) : (
+        /* ===================== TAB DUYỆT HỌC SINH XIN VÀO LỚP ===================== */
+        <>
+          <section className="page-intro">
+            <div>
+              <span className="eyebrow purple">
+                <Icon name="school" size={15} /> PHÊ DUYỆT HỌC SINH THAM GIA LỚP
+              </span>
+              <h1>Yêu cầu tham gia lớp học</h1>
+              <p>
+                Xem và phê duyệt các học sinh gửi yêu cầu xin vào lớp học thêm của bạn. Khi được duyệt, học sinh sẽ nhận được toàn bộ bài tập và bảng tin của lớp.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={onRefresh}
+              style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+            >
+              <Icon name="check" size={14} /> Làm mới danh sách
+            </button>
+          </section>
+
+          {/* Bộ lọc tab trạng thái */}
+          <div
+            style={{
+              display: "flex",
+              gap: "8px",
+              background: "#f3e8ff",
+              padding: "4px",
+              borderRadius: "12px",
+              width: "fit-content",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setFilter("pending")}
+              style={{
+                border: "none",
+                background: filter === "pending" ? "#ffffff" : "transparent",
+                color: filter === "pending" ? "#6d28d9" : "#7c3aed",
+                fontWeight: 750,
+                fontSize: "12px",
+                padding: "6px 14px",
+                borderRadius: "9px",
+                cursor: "pointer",
+                boxShadow: filter === "pending" ? "0 2px 6px rgba(124, 58, 237, 0.1)" : "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
+              <span>Chờ phê duyệt</span>
+              {pendingCount > 0 && (
+                <span
+                  style={{
+                    background: "#ef4444",
+                    color: "#ffffff",
+                    fontSize: "10.5px",
+                    fontWeight: 800,
+                    padding: "1px 6px",
+                    borderRadius: "999px",
+                  }}
+                >
+                  {pendingCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setFilter("accepted")}
+              style={{
+                border: "none",
+                background: filter === "accepted" ? "#ffffff" : "transparent",
+                color: filter === "accepted" ? "#6d28d9" : "#7c3aed",
+                fontWeight: 750,
+                fontSize: "12px",
+                padding: "6px 14px",
+                borderRadius: "9px",
+                cursor: "pointer",
+                boxShadow: filter === "accepted" ? "0 2px 6px rgba(124, 58, 237, 0.1)" : "none",
+              }}
+            >
+              Đã đồng ý ({acceptedCount})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setFilter("declined")}
+              style={{
+                border: "none",
+                background: filter === "declined" ? "#ffffff" : "transparent",
+                color: filter === "declined" ? "#6d28d9" : "#7c3aed",
+                fontWeight: 750,
+                fontSize: "12px",
+                padding: "6px 14px",
+                borderRadius: "9px",
+                cursor: "pointer",
+                boxShadow: filter === "declined" ? "0 2px 6px rgba(124, 58, 237, 0.1)" : "none",
+              }}
+            >
+              Đã từ chối ({declinedCount})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setFilter("all")}
+              style={{
+                border: "none",
+                background: filter === "all" ? "#ffffff" : "transparent",
+                color: filter === "all" ? "#6d28d9" : "#7c3aed",
+                fontWeight: 750,
+                fontSize: "12px",
+                padding: "6px 14px",
+                borderRadius: "9px",
+                cursor: "pointer",
+                boxShadow: filter === "all" ? "0 2px 6px rgba(124, 58, 237, 0.1)" : "none",
+              }}
+            >
+              Tất cả ({requests.length})
+            </button>
+          </div>
+
+          {/* Danh sách yêu cầu học sinh */}
+          {filteredRequests.length === 0 ? (
+            <div
+              style={{
+                padding: "40px",
+                textAlign: "center",
+                background: "#faf5ff",
+                borderRadius: "18px",
+                border: "1.5px dashed #d8b4fe",
+                color: "#6b7280",
+              }}
+            >
+              <span style={{ fontSize: "32px" }}>📬</span>
+              <h3 style={{ color: "#581c87", margin: "10px 0 4px" }}>
+                {filter === "pending"
+                  ? "Không có yêu cầu nào đang chờ duyệt"
+                  : filter === "accepted"
+                  ? "Chưa có học sinh nào được đồng ý"
+                  : "Không có yêu cầu nào"}
+              </h3>
+              <p style={{ margin: 0, fontSize: "13px" }}>
+                Khi học sinh bấm "Xin vào lớp", thông báo và danh sách sẽ hiển thị ngay tại đây.
+              </p>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "16px" }}>
+              {filteredRequests.map((req) => {
+                const isPending = req.status === "pending";
+                const isAccepted = req.status === "accepted";
+                const isProcessing = processingId === req.id;
+
+                return (
                   <div
+                    key={req.id}
                     style={{
-                      marginTop: "12px",
-                      padding: "8px 10px",
-                      background: "#faf5ff",
-                      borderRadius: "10px",
-                      border: "1px solid #ede9fe",
-                      fontSize: "11.5px",
+                      background: "#ffffff",
+                      border: isPending ? "1.5px solid #c084fc" : "1px solid #e5e7eb",
+                      borderRadius: "16px",
+                      padding: "18px",
+                      boxShadow: isPending ? "0 4px 14px rgba(124, 58, 237, 0.08)" : "none",
                       display: "flex",
                       flexDirection: "column",
-                      gap: "4px",
+                      justifyContent: "space-between",
+                      gap: "14px",
                     }}
                   >
                     <div>
-                      <span style={{ color: "#6b7280" }}>Lớp xin vào: </span>
-                      <strong style={{ color: "#581c87" }}>{req.classroom.name}</strong> ({req.classroom.subject})
-                    </div>
-                    {req.student.school && (
-                      <div style={{ color: "#4b5563" }}>
-                        <span>Trường: </span>
-                        <strong>{req.student.school}</strong> {req.student.className ? `· Lớp ${req.student.className}` : ""}
+                      {/* Header học sinh */}
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginBottom: "12px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                          {req.student.avatarUrl ? (
+                            <img
+                              src={req.student.avatarUrl}
+                              alt={req.student.displayName}
+                              style={{ width: "42px", height: "42px", borderRadius: "50%", objectFit: "cover" }}
+                            />
+                          ) : (
+                            <div
+                              style={{
+                                width: "42px",
+                                height: "42px",
+                                borderRadius: "50%",
+                                background: "#8b5cf6",
+                                color: "#ffffff",
+                                fontWeight: 800,
+                                fontSize: "15px",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                            >
+                              {req.student.avatar || req.student.displayName.slice(0, 2).toUpperCase()}
+                            </div>
+                          )}
+
+                          <div>
+                            <strong style={{ fontSize: "14px", color: "#1f2937", display: "block" }}>
+                              {req.student.displayName}
+                            </strong>
+                            <span style={{ fontSize: "11px", color: "#7c3aed", fontWeight: 700 }}>
+                              Mã HS: {req.student.studentCode}
+                            </span>
+                          </div>
+                        </div>
+
+                        <span
+                          style={{
+                            fontSize: "11px",
+                            fontWeight: 800,
+                            padding: "3px 8px",
+                            borderRadius: "999px",
+                            background: isPending ? "#fef9c3" : isAccepted ? "#dcfce7" : "#fee2e2",
+                            color: isPending ? "#854d0e" : isAccepted ? "#15803d" : "#991b1b",
+                          }}
+                        >
+                          {isPending ? "Chờ duyệt" : isAccepted ? "Đã đồng ý" : "Đã từ chối"}
+                        </span>
                       </div>
-                    )}
-                    <div style={{ color: "#9ca3af", fontSize: "10.5px" }}>
-                      Gửi lúc: {new Date(req.createdAt).toLocaleString("vi-VN")}
+
+                      {/* Thông tin lớp xin vào & học lực */}
+                      <div style={{ background: "#faf5ff", padding: "10px 12px", borderRadius: "10px", fontSize: "12px", color: "#4b5563", display: "flex", flexDirection: "column", gap: "4px" }}>
+                        <div>🎯 Xin vào: <strong style={{ color: "#6d28d9" }}>{req.classroom.name}</strong> ({req.classroom.subject})</div>
+                        {req.student.school && <div>🏫 Trường: {req.student.school}</div>}
+                        <div style={{ display: "flex", gap: "12px", marginTop: "2px" }}>
+                          <span>🌸 Điểm sen: <strong>{req.student.lotusPoints}</strong></span>
+                          {req.student.score !== null && req.student.score !== undefined && (
+                            <span>📊 Điểm kiểm tra: <strong>{req.student.score}/10</strong></span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Nút hành động */}
+                    <div style={{ display: "flex", gap: "8px", paddingTop: "8px", borderTop: "1px dashed #e5e7eb" }}>
+                      <button
+                        type="button"
+                        onClick={() => onOpenDetail(req)}
+                        style={{
+                          flex: 1,
+                          padding: "7px 10px",
+                          fontSize: "12px",
+                          fontWeight: 700,
+                          borderRadius: "8px",
+                          border: "1px solid #d8b4fe",
+                          background: "#ffffff",
+                          color: "#7c3aed",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Xem chi tiết
+                      </button>
+
+                      {isPending && (
+                        <>
+                          <button
+                            type="button"
+                            disabled={isProcessing}
+                            onClick={() => void handleQuickRespond(req.id, "accepted", req.student.displayName, req.classroom.name)}
+                            style={{
+                              flex: 1,
+                              padding: "7px 10px",
+                              fontSize: "12px",
+                              fontWeight: 750,
+                              borderRadius: "8px",
+                              border: "none",
+                              background: "linear-gradient(135deg, #16a34a 0%, #15803d 100%)",
+                              color: "#ffffff",
+                              cursor: isProcessing ? "wait" : "pointer",
+                            }}
+                          >
+                            Đồng ý
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isProcessing}
+                            onClick={() => void handleQuickRespond(req.id, "declined", req.student.displayName, req.classroom.name)}
+                            style={{
+                              padding: "7px 10px",
+                              fontSize: "12px",
+                              fontWeight: 700,
+                              borderRadius: "8px",
+                              border: "1px solid #fecaca",
+                              background: "#fef2f2",
+                              color: "#dc2626",
+                              cursor: isProcessing ? "wait" : "pointer",
+                            }}
+                          >
+                            Từ chối
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
-                </div>
-
-                {/* Hành động */}
-                <div style={{ display: "flex", gap: "8px", paddingTop: "8px", borderTop: "1px dashed #ede9fe" }}>
-                  <button
-                    type="button"
-                    onClick={() => onOpenDetail(req)}
-                    style={{
-                      flex: 1,
-                      background: "#ffffff",
-                      border: "1.5px solid #d8b4fe",
-                      color: "#6d28d9",
-                      padding: "7px 10px",
-                      borderRadius: "8px",
-                      fontSize: "11.5px",
-                      fontWeight: 750,
-                      cursor: "pointer",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: "4px",
-                    }}
-                  >
-                    <Icon name="book" size={13} />
-                    <span>Xem chi tiết</span>
-                  </button>
-
-                  {isPending && (
-                    <>
-                      <button
-                        type="button"
-                        disabled={isBusy}
-                        onClick={() => void handleQuickRespond(req.id, "declined", req.student.displayName, req.classroom.name)}
-                        style={{
-                          background: "#fef2f2",
-                          border: "1px solid #fecaca",
-                          color: "#dc2626",
-                          padding: "7px 10px",
-                          borderRadius: "8px",
-                          fontSize: "11.5px",
-                          fontWeight: 750,
-                          cursor: isBusy ? "wait" : "pointer",
-                        }}
-                      >
-                        Từ chối
-                      </button>
-                      <button
-                        type="button"
-                        disabled={isBusy}
-                        onClick={() => void handleQuickRespond(req.id, "accepted", req.student.displayName, req.classroom.name)}
-                        style={{
-                          background: "linear-gradient(135deg, #22c55e 0%, #16a34a 100%)",
-                          border: "none",
-                          color: "#ffffff",
-                          padding: "7px 12px",
-                          borderRadius: "8px",
-                          fontSize: "11.5px",
-                          fontWeight: 750,
-                          cursor: isBusy ? "wait" : "pointer",
-                          boxShadow: "0 2px 6px rgba(22, 163, 74, 0.2)",
-                        }}
-                      >
-                        Đồng ý
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
 }
-

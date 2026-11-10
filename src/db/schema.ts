@@ -195,6 +195,94 @@ export const dailyActivity = pgTable(
   (table) => [uniqueIndex("daily_activity_user_date_idx").on(table.userId, table.activityDate)],
 ).enableRLS();
 
+export const classroomPosts = pgTable(
+  "classroom_posts",
+  {
+    id: serial("id").primaryKey(),
+    classroomId: integer("classroom_id")
+      .notNull()
+      .references(() => classrooms.id, { onDelete: "cascade" }),
+    authorId: integer("author_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: varchar("title", { length: 255 }),
+    content: text("content").notNull(),
+    category: varchar("category", { length: 50 }).notNull().default("announcement"),
+    attachmentUrl: text("attachment_url"),
+    attachmentName: varchar("attachment_name", { length: 255 }),
+    isPinned: boolean("is_pinned").notNull().default(false),
+    likesCount: integer("likes_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("classroom_posts_classroom_id_idx").on(table.classroomId)],
+).enableRLS();
+
+export const classroomComments = pgTable(
+  "classroom_comments",
+  {
+    id: serial("id").primaryKey(),
+    postId: integer("post_id")
+      .notNull()
+      .references(() => classroomPosts.id, { onDelete: "cascade" }),
+    authorId: integer("author_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("classroom_comments_post_id_idx").on(table.postId)],
+).enableRLS();
+
+export const classroomMaterials = pgTable(
+  "classroom_materials",
+  {
+    id: serial("id").primaryKey(),
+    classroomId: integer("classroom_id")
+      .notNull()
+      .references(() => classrooms.id, { onDelete: "cascade" }),
+    teacherId: integer("teacher_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: varchar("title", { length: 255 }).notNull(),
+    description: text("description"),
+    category: varchar("category", { length: 50 }).notNull().default("document"),
+    fileUrl: text("file_url"),
+    fileName: varchar("file_name", { length: 255 }),
+    fileSize: varchar("file_size", { length: 50 }),
+    isExclusive: boolean("is_exclusive").notNull().default(true),
+    downloadCount: integer("download_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("classroom_materials_classroom_id_idx").on(table.classroomId)],
+).enableRLS();
+
+export const classroomNotifications = pgTable(
+  "classroom_notifications",
+  {
+    id: serial("id").primaryKey(),
+    recipientId: integer("recipient_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    senderId: integer("sender_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    classroomId: integer("classroom_id")
+      .notNull()
+      .references(() => classrooms.id, { onDelete: "cascade" }),
+    type: varchar("type", { length: 50 }).notNull(),
+    title: varchar("title", { length: 255 }).notNull(),
+    content: text("content").notNull(),
+    linkId: integer("link_id"),
+    isRead: boolean("is_read").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("classroom_notifications_recipient_idx").on(table.recipientId, table.isRead)],
+).enableRLS();
+
 export type User = typeof users.$inferSelect;
 export type Lesson = typeof lessons.$inferSelect;
 export type QuizAttempt = typeof quizAttempts.$inferSelect;
+export type ClassroomPost = typeof classroomPosts.$inferSelect;
+export type ClassroomComment = typeof classroomComments.$inferSelect;
+export type ClassroomMaterial = typeof classroomMaterials.$inferSelect;
+export type ClassroomNotification = typeof classroomNotifications.$inferSelect;
