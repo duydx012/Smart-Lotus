@@ -7,6 +7,7 @@ import {
   initialsOf,
   seedStudents,
   studentStatuses,
+  studentThemes,
   type Student,
   type StudentStatus,
 } from "@/lib/student-data";
@@ -68,6 +69,23 @@ export default function StudentManagement({ classId, classLabel, classTitle, cla
   const [inviteCode, setInviteCode] = useState("");
   const [inviteNotice, setInviteNotice] = useState("");
   const [inviting, setInviting] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+
+  async function handleSeedStudents() {
+    if (!classId) return;
+    setSeeding(true);
+    setLoadError("");
+    try {
+      const res = await smartLotusApi.seedClassroomStudents(classId);
+      const { students: members } = await smartLotusApi.getClassroom(classId);
+      setStudents(members);
+      setInviteNotice(res.message);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Không thể nạp học sinh mẫu");
+    } finally {
+      setSeeding(false);
+    }
+  }
 
   useEffect(() => {
     if (!serverManaged || !classId) return;
@@ -125,17 +143,49 @@ export default function StudentManagement({ classId, classLabel, classTitle, cla
     return { total: scopedStudents.length, averageScore, averageProgress, needSupport };
   }, [scopedStudents]);
 
-  function saveStudent(input: Student) {
-    setStudents((current) => {
-      const exists = current.some((student) => student.id === input.id);
-      return exists ? current.map((student) => (student.id === input.id ? input : student)) : [...current, input];
-    });
+  async function saveStudent(input: Student) {
+    if (serverManaged && classId) {
+      const res = await smartLotusApi.addStudentToClassroom(classId, {
+        mode: "create",
+        fullName: input.fullName,
+        email: input.email,
+        birthDate: input.birthDate,
+        gender: input.gender as "Nam" | "Nữ",
+        parentName: input.parentName,
+        parentPhone: input.parentPhone,
+        score: input.score,
+      });
+      const savedStudent = res.student ?? input;
+      setStudents((current) => {
+        const exists = current.some((student) => student.id === savedStudent.id);
+        return exists ? current.map((student) => (student.id === savedStudent.id ? savedStudent : student)) : [...current, savedStudent];
+      });
+      setInviteNotice(res.message || `Đã thêm học sinh ${input.fullName} vào CSDL!`);
+    } else {
+      setStudents((current) => {
+        const exists = current.some((student) => student.id === input.id);
+        return exists ? current.map((student) => (student.id === input.id ? input : student)) : [...current, input];
+      });
+    }
   }
 
-  function removeStudent(id: string) {
-    setStudents((current) => current.filter((student) => student.id !== id));
-    setDetail((current) => (current?.id === id ? null : current));
-    setConfirmDelete(null);
+  async function removeStudent(id: string) {
+    if (serverManaged && classId) {
+      try {
+        await smartLotusApi.removeStudentFromClassroom(classId, id);
+        setStudents((current) => current.filter((student) => student.id !== id));
+        setDetail((current) => (current?.id === id ? null : current));
+        setConfirmDelete(null);
+        setInviteNotice("Đã xóa học sinh khỏi lớp học.");
+        setTimeout(() => setInviteNotice(""), 4000);
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : "Không thể xóa học sinh khỏi lớp");
+      }
+    } else {
+      setStudents((current) => current.filter((student) => student.id !== id));
+      setDetail((current) => (current?.id === id ? null : current));
+      setConfirmDelete(null);
+    }
   }
 
   function updateStatus(id: string, status: StudentStatus) {
@@ -145,10 +195,41 @@ export default function StudentManagement({ classId, classLabel, classTitle, cla
     setDetail((current) => (current?.id === id ? { ...current, status } : current));
   }
 
-  async function inviteStudent(event: React.FormEvent<HTMLFormElement>) {
+  async function handleAddByCode(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!classId || !inviteCode.trim()) {
-      setInviteNotice("Nhập mã ID học sinh để gửi lời mời.");
+      setInviteNotice("Vui lòng nhập mã ID học sinh (VD: HS-00000001).");
+      return;
+    }
+    setInviting(true);
+    setInviteNotice("");
+    try {
+      const res = await smartLotusApi.addStudentToClassroom(classId, {
+        mode: "byCode",
+        studentCode: inviteCode.trim(),
+      });
+      if (res.student) {
+        setStudents((current) => {
+          const exists = current.some((s) => s.id === res.student!.id);
+          return exists ? current : [...current, res.student!];
+        });
+      } else {
+        const { students: members } = await smartLotusApi.getClassroom(classId);
+        setStudents(members);
+      }
+      setInviteCode("");
+      setInviteNotice(res.message || "Đã thêm học sinh vào lớp thành công!");
+      setTimeout(() => setInviteNotice(""), 4000);
+    } catch (error) {
+      setInviteNotice(error instanceof Error ? error.message : "Không thể thêm học sinh.");
+    } finally {
+      setInviting(false);
+    }
+  }
+
+  async function handleSendInvite() {
+    if (!classId || !inviteCode.trim()) {
+      setInviteNotice("Vui lòng nhập mã ID học sinh để gửi lời mời.");
       return;
     }
     setInviting(true);
@@ -157,6 +238,7 @@ export default function StudentManagement({ classId, classLabel, classTitle, cla
       await smartLotusApi.inviteStudent(classId, inviteCode.trim());
       setInviteCode("");
       setInviteNotice("Đã gửi lời mời. Học sinh cần chấp nhận để vào lớp.");
+      setTimeout(() => setInviteNotice(""), 4000);
     } catch (error) {
       setInviteNotice(error instanceof Error ? error.message : "Không thể gửi lời mời.");
     } finally {
@@ -175,21 +257,88 @@ export default function StudentManagement({ classId, classLabel, classTitle, cla
             <p>{classSubtitle ?? "Xem thông tin cá nhân, theo dõi điểm số, tiến độ và trạng thái của từng học sinh."}</p>
           </div>
         </div>
-        {!serverManaged && <button className="primary-button" onClick={() => setModal({ mode: "add" })}>
-          <Icon name="plus" /> Thêm học sinh
-        </button>}
+        <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+          {serverManaged && classId && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void handleSeedStudents()}
+              disabled={seeding}
+              style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+            >
+              <Icon name="sparkles" size={14} />
+              {seeding ? "Đang nạp..." : "⚡ Nạp 5 HS mẫu"}
+            </button>
+          )}
+          <button className="primary-button" onClick={() => setModal({ mode: "add" })}>
+            <Icon name="plus" /> Thêm học sinh
+          </button>
+        </div>
       </section>
       {loadError && <p className="student-form-error" role="alert">{loadError}</p>}
       {serverManaged && (
-        <form className="classroom-invite-form card" onSubmit={(event) => void inviteStudent(event)}>
-          <div>
-            <span className="section-kicker">MỜI HỌC SINH VÀO LỚP</span>
-            <p>Nhập mã ID học sinh để gửi lời mời chờ xác nhận.</p>
+        <div className="classroom-invite-bar">
+          <div className="classroom-invite-meta">
+            <span className="class-badge">Lớp {classLabel ?? classId}</span>
+            <span style={{ fontSize: "13px", fontWeight: 600, color: "#374151" }}>
+              Thêm nhanh học sinh bằng mã ID:
+            </span>
           </div>
-          <input aria-label="Mã ID học sinh" value={inviteCode} onChange={(event) => setInviteCode(event.target.value.toUpperCase())} maxLength={11} placeholder="HS-00000001" />
-          <button className="primary-button" type="submit" disabled={inviting}>{inviting ? "Đang gửi..." : "Gửi lời mời"}</button>
-          {inviteNotice && <p className="classroom-invite-notice" role="status">{inviteNotice}</p>}
-        </form>
+
+          <form
+            onSubmit={(event) => void handleAddByCode(event)}
+            className="classroom-invite-inputs"
+          >
+            <input
+              aria-label="Mã ID học sinh"
+              value={inviteCode}
+              onChange={(event) => setInviteCode(event.target.value.toUpperCase())}
+              maxLength={11}
+              placeholder="HS-00000001"
+              disabled={inviting}
+            />
+            <button
+              type="submit"
+              className="btn-quick-add"
+              disabled={inviting}
+            >
+              <Icon name="plus" size={14} />
+              <span>{inviting ? "Đang xử lý..." : "Thêm vào lớp"}</span>
+            </button>
+            <button
+              type="button"
+              className="btn-invite"
+              onClick={() => void handleSendInvite()}
+              disabled={inviting}
+              title="Gửi lời mời để học sinh tự xác nhận"
+            >
+              <span>Gửi lời mời</span>
+            </button>
+          </form>
+
+          {inviteNotice && (
+            <div className="classroom-invite-status" role="status">
+              <span>{inviteNotice}</span>
+              <button
+                type="button"
+                onClick={() => setInviteNotice("")}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "inherit",
+                  fontWeight: 700,
+                  fontSize: "14px",
+                  padding: "0 4px",
+                  lineHeight: 1,
+                }}
+                aria-label="Đóng thông báo"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       <section className="stat-grid">
@@ -233,29 +382,50 @@ export default function StudentManagement({ classId, classLabel, classTitle, cla
 
         <div className="student-mgmt-table-wrap">
           <div className="student-mgmt-table">
-            <div className={`smt-head ${serverManaged ? "smt-readonly" : ""}`}>
+            <div className="smt-head">
               <span>Học sinh</span>
               <span>Thông tin cá nhân</span>
               <span>Điểm</span>
               <span>Tiến độ</span>
               <span>Trạng thái</span>
-              {!serverManaged && <span>Thao tác</span>}
+              <span>Thao tác</span>
             </div>
             {filtered.length === 0 ? (
               <div className="smt-empty">
                 <Icon name="search" size={26} />
-                <strong>Không tìm thấy học sinh</strong>
-                <p>Thử thay đổi bộ lọc hoặc từ khoá tìm kiếm.</p>
+                <strong>{serverManaged ? "Lớp học chưa có học sinh nào" : "Không tìm thấy học sinh"}</strong>
+                <p>{serverManaged ? "Mời học sinh bằng mã ID ở trên, hoặc bấm nạp nhanh 5 học sinh mẫu vào CSDL để thử nghiệm ngay." : "Thử thay đổi bộ lọc hoặc từ khoá tìm kiếm."}</p>
+                {serverManaged && classId && (
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={() => void handleSeedStudents()}
+                    disabled={seeding}
+                    style={{ marginTop: "12px", display: "inline-flex", alignItems: "center", gap: "6px" }}
+                  >
+                    <Icon name="sparkles" size={15} />
+                    {seeding ? "Đang nạp học sinh..." : "⚡ Nạp nhanh 5 học sinh mẫu vào lớp"}
+                  </button>
+                )}
               </div>
             ) : (
               filtered.map((student) => (
-                <div className={`smt-row ${serverManaged ? "smt-readonly" : ""}`} key={student.id} onClick={() => { if (!serverManaged) setDetail(student); }} role={serverManaged ? undefined : "button"} tabIndex={serverManaged ? undefined : 0} onKeyDown={(event) => { if (!serverManaged && event.key === "Enter") setDetail(student); }}>
+                <div
+                  className="smt-row"
+                  key={student.id}
+                  onClick={() => setDetail(student)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") setDetail(student);
+                  }}
+                >
                   <span className="smt-student">
                     <i className="student-avatar smt-avatar">{initialsOf(student.fullName)}</i>
                     <span className="smt-student-copy">
                       <strong>{student.fullName}</strong>
                       <small>{student.email}</small>
-                      {serverManaged && student.studentCode && <small className="student-code">Mã ID: <strong>{student.studentCode}</strong></small>}
+                      {student.studentCode && <small className="student-code">Mã ID: <strong>{student.studentCode}</strong></small>}
                       <span className="class-chip">Lớp {student.className}</span>
                     </span>
                   </span>
@@ -272,11 +442,19 @@ export default function StudentManagement({ classId, classLabel, classTitle, cla
                     <i><b style={{ width: `${progressOf(student)}%` }} /></i>
                     <span>{progressOf(student)}%</span>
                   </span>
-                  {serverManaged ? <span className="student-status-readonly">{student.status}</span> : <StatusSelect value={student.status} onChange={(status) => updateStatus(student.id, status)} />}
-                  {!serverManaged && <span className="smt-actions" onClick={(event) => event.stopPropagation()}>
-                    <button className="smt-action" aria-label={`Sửa ${student.fullName}`} onClick={() => setModal({ mode: "edit", student })}><Icon name="edit" size={15} /></button>
-                    <button className="smt-action danger" aria-label={`Xoá ${student.fullName}`} onClick={() => setConfirmDelete(student)}><Icon name="trash" size={15} /></button>
-                  </span>}
+                  {serverManaged ? (
+                    <span className="student-status-readonly">{student.status}</span>
+                  ) : (
+                    <StatusSelect value={student.status} onChange={(status) => updateStatus(student.id, status)} />
+                  )}
+                  <span className="smt-actions" onClick={(event) => event.stopPropagation()}>
+                    <button className="smt-action" aria-label={`Sửa ${student.fullName}`} onClick={() => setModal({ mode: "edit", student })}>
+                      <Icon name="edit" size={15} />
+                    </button>
+                    <button className="smt-action danger" aria-label={`Xoá ${student.fullName}`} onClick={() => setConfirmDelete(student)}>
+                      <Icon name="trash" size={15} />
+                    </button>
+                  </span>
                 </div>
               ))
             )}
@@ -288,10 +466,10 @@ export default function StudentManagement({ classId, classLabel, classTitle, cla
         <StudentFormModal
           modal={modal}
           classes={classes}
-          lockedClass={classId}
+          lockedClass={classLabel ?? classId}
           onClose={() => setModal(null)}
-          onSaved={(student) => {
-            saveStudent(student);
+          onSaved={async (student) => {
+            await saveStudent(student);
             setModal(null);
           }}
         />
@@ -355,7 +533,7 @@ function StatusSelect({ value, onChange }: { value: StudentStatus; onChange: (st
   );
 }
 
-export function StudentFormModal({ modal, classes, lockedClass, onClose, onSaved }: { modal: Exclude<ModalState, null>; classes: string[]; lockedClass?: string; onClose: () => void; onSaved: (student: Student) => void }) {
+export function StudentFormModal({ modal, classes, lockedClass, onClose, onSaved }: { modal: Exclude<ModalState, null>; classes: string[]; lockedClass?: string; onClose: () => void; onSaved: (student: Student) => Promise<void> | void }) {
   const editing = modal.mode === "edit" ? modal.student : null;
   const [form, setForm] = useState({
     fullName: editing?.fullName ?? "",
@@ -365,50 +543,51 @@ export function StudentFormModal({ modal, classes, lockedClass, onClose, onSaved
     className: editing?.className ?? lockedClass ?? classes[0] ?? "1A",
     parentName: editing?.parentName ?? "",
     parentPhone: editing?.parentPhone ?? "",
-    score: editing ? String(editing.score) : "0",
-    lessonsCompleted: editing ? String(editing.lessonsCompleted) : "0",
-    totalLessons: editing ? String(editing.totalLessons) : "40",
-    status: editing?.status ?? "Ổn định",
+    interest: editing?.interest ?? studentThemes[0].label,
   });
   const [error, setError] = useState("");
-  const [statusTouched, setStatusTouched] = useState(Boolean(editing));
+  const [submitting, setSubmitting] = useState(false);
 
   function setField(field: keyof typeof form, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
-  function handleScoreChange(value: string) {
-    setField("score", value);
-    if (!statusTouched) {
-      setForm((current) => ({ ...current, status: deriveStatus(Number(value) || 0) }));
-    }
-  }
-
-  function handleSubmit(event: React.FormEvent) {
+  async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    const score = Math.max(0, Math.min(MAX_SCORE, Math.round(Number(form.score) || 0)));
-    const lessonsCompleted = Math.max(0, Math.round(Number(form.lessonsCompleted) || 0));
-    const totalLessons = Math.max(1, Math.round(Number(form.totalLessons) || 1));
 
     if (!form.fullName.trim()) return setError("Vui lòng nhập họ và tên học sinh.");
     if (!form.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return setError("Email không hợp lệ.");
     if (!form.parentPhone.trim()) return setError("Vui lòng nhập số điện thoại phụ huynh.");
 
-    onSaved({
-      id: editing?.id ?? `hs-${Date.now().toString(36)}`,
-      fullName: form.fullName.trim(),
-      email: form.email.trim(),
-      birthDate: form.birthDate,
-      gender: form.gender,
-      className: lockedClass ?? (form.className.trim() || "1A"),
-      parentName: form.parentName.trim(),
-      parentPhone: form.parentPhone.trim(),
-      score,
-      lessonsCompleted,
-      totalLessons,
-      lastActive: editing?.lastActive ?? new Date().toISOString().slice(0, 10),
-      status: form.status as StudentStatus,
-    });
+    const score = editing ? editing.score : 0;
+    const lessonsCompleted = editing ? editing.lessonsCompleted : 0;
+    const totalLessons = editing ? editing.totalLessons : 40;
+    const status = editing ? editing.status : "Ổn định";
+
+    setError("");
+    setSubmitting(true);
+    try {
+      await onSaved({
+        id: editing?.id ?? `hs-${Date.now().toString(36)}`,
+        fullName: form.fullName.trim(),
+        email: form.email.trim(),
+        birthDate: form.birthDate,
+        gender: form.gender,
+        className: lockedClass ?? (form.className.trim() || "1A"),
+        parentName: form.parentName.trim(),
+        parentPhone: form.parentPhone.trim(),
+        score,
+        lessonsCompleted,
+        totalLessons,
+        lastActive: editing?.lastActive ?? new Date().toISOString().slice(0, 10),
+        status,
+        interest: form.interest,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không thể lưu học sinh vào hệ thống.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -425,11 +604,11 @@ export function StudentFormModal({ modal, classes, lockedClass, onClose, onSaved
         <div className="student-form">
           <label className="full">
             Họ và tên
-            <input type="text" value={form.fullName} onChange={(event) => setField("fullName", event.target.value)} placeholder="VD: Nguyễn Minh Anh" />
+            <input type="text" value={form.fullName} onChange={(event) => setField("fullName", event.target.value)} placeholder="VD: Nguyễn Minh Anh" required />
           </label>
           <label className="full">
             Email
-            <input type="email" value={form.email} onChange={(event) => setField("email", event.target.value)} placeholder="VD: minhanh@smartlotus.edu.vn" />
+            <input type="email" value={form.email} onChange={(event) => setField("email", event.target.value)} placeholder="VD: minhanh@smartlotus.edu.vn" required />
           </label>
           <label>
             Ngày sinh
@@ -442,8 +621,8 @@ export function StudentFormModal({ modal, classes, lockedClass, onClose, onSaved
               <option value="Nam">Nam</option>
             </select>
           </label>
-          <label>
-            Lớp
+          <label className="full">
+            Lớp học
             {lockedClass ? (
               <input type="text" value={`Lớp ${lockedClass}`} readOnly />
             ) : (
@@ -459,32 +638,26 @@ export function StudentFormModal({ modal, classes, lockedClass, onClose, onSaved
           </label>
           <label>
             SĐT phụ huynh
-            <input type="tel" value={form.parentPhone} onChange={(event) => setField("parentPhone", event.target.value)} placeholder="VD: 0912 345 678" />
+            <input type="tel" value={form.parentPhone} onChange={(event) => setField("parentPhone", event.target.value)} placeholder="VD: 0912 345 678" required />
           </label>
-          <label>
-            Điểm tích luỹ
-            <input type="number" min={0} max={MAX_SCORE} value={form.score} onChange={(event) => handleScoreChange(event.target.value)} />
-          </label>
-          <label>
-            Số bài hoàn thành
-            <input type="number" min={0} value={form.lessonsCompleted} onChange={(event) => setField("lessonsCompleted", event.target.value)} />
-          </label>
-          <label>
-            Tổng số bài
-            <input type="number" min={1} value={form.totalLessons} onChange={(event) => setField("totalLessons", event.target.value)} />
-          </label>
-          <label>
-            Trạng thái
-            <select value={form.status} onChange={(event) => { setStatusTouched(true); setField("status", event.target.value); }}>
-              {studentStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+          <label className="full">
+            Chủ đề / Sở thích yêu thích (Phục vụ AI cá nhân hóa đề)
+            <select value={form.interest} onChange={(event) => setField("interest", event.target.value)}>
+              {studentThemes.map((th) => (
+                <option key={th.id} value={th.label}>
+                  {th.emoji} {th.label} ({th.examples})
+                </option>
+              ))}
             </select>
           </label>
           {error && <p className="student-form-error">{error}</p>}
         </div>
 
         <div className="student-modal-actions">
-          <button type="button" className="secondary-button" onClick={onClose}>Hủy</button>
-          <button type="submit" className="primary-button">{editing ? "Lưu thay đổi" : "Thêm học sinh"}</button>
+          <button type="button" className="secondary-button" onClick={onClose} disabled={submitting}>Hủy</button>
+          <button type="submit" className="primary-button" disabled={submitting}>
+            {submitting ? "Đang lưu vào CSDL..." : (editing ? "Lưu thay đổi" : "Thêm học sinh")}
+          </button>
         </div>
       </form>
     </div>
@@ -522,6 +695,7 @@ function StudentDrawer({ student, onClose, onEdit, onDelete, onStatusChange }: {
             <div><dt>Giới tính</dt><dd>{student.gender}</dd></div>
             <div><dt>Phụ huynh</dt><dd>{student.parentName}</dd></div>
             <div><dt>SĐT phụ huynh</dt><dd>{student.parentPhone}</dd></div>
+            {student.interest && <div><dt>Chủ đề ưa thích</dt><dd>{student.interest}</dd></div>}
             <div><dt>Hoạt động gần nhất</dt><dd>{formatDate(student.lastActive)}</dd></div>
           </dl>
         </div>

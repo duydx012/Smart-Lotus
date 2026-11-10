@@ -65,7 +65,8 @@ export async function POST(request: Request, { params }: RouteContext) {
       }
       answerByQuestion.set(answer.questionId, answer.answer);
     }
-    const questions = assignment.assignment.questions;
+    const questionsRaw = assignment.assignment.questions as Array<QuizQuestion & { _variants?: Record<string | number, QuizQuestion[]> }>;
+    const questions = questionsRaw[0]?._variants?.[student.id] || assignment.assignment.questions;
     if (answerByQuestion.size !== questions.length
       || questions.some((question) => !answerByQuestion.has(question.id))) {
       return Response.json({ message: "Bài làm chưa trả lời đủ câu hỏi" }, { status: 400 });

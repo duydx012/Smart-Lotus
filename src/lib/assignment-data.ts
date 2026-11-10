@@ -12,6 +12,9 @@ export type Assignment = {
   curriculumLevel?: number;
   durationMinutes?: number;
   questions?: import("./learning-data").QuizQuestion[];
+  isAdaptive?: boolean;
+  personalizedTheme?: string;
+  personalizedForStudent?: string;
   submission?: {
     score: number;
     correctAnswers: number;

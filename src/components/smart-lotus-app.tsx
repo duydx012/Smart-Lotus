@@ -5,7 +5,10 @@ import { Icon, type IconName, LotusLogo, LotusMascot } from "./icons";
 import { curriculum, difficultyMeta, questions, type QuizQuestion, type SurveyQuestion } from "@/lib/learning-data";
 import { adminMetrics } from "@/lib/role-data";
 import { calculateQuestionScore, calculateQuizScore, formatDuration } from "@/lib/scoring";
-import { smartLotusApi, type AttemptPayload, type ClassroomInvitation, type DashboardData, type LessonRecord, type Role } from "@/lib/api";
+import { smartLotusApi, type AttemptPayload, type ClassroomInvitation, type DashboardData, type LessonRecord, type Role, type StudentClassroomRequest } from "@/lib/api";
+import StudentExtraClasses from "./student-extra-classes";
+import TeacherExtraClasses from "./teacher-extra-classes";
+import StudentRequestModal from "./student-request-modal";
 import { supabase } from "@/lib/supabase";
 import {
   answerModeFor,
@@ -30,9 +33,10 @@ import TeacherOverview from "./teacher-overview";
 import PlacementSurvey from "./placement-survey";
 import StudentClassrooms from "./student-classrooms";
 import type { Assignment } from "@/lib/assignment-data";
+import { studentThemes } from "@/lib/student-data";
 
-type StudentView = "home" | "classrooms" | "exercises" | "roadmap" | "compete" | "achievements";
-type TeacherView = "overview" | "classes" | "assignments";
+type StudentView = "home" | "classrooms" | "extra_classes" | "exercises" | "roadmap" | "compete" | "achievements";
+type TeacherView = "overview" | "classes" | "assignments" | "extra_classes";
 type AdminView = "overview" | "users" | "content" | "data" | "config";
 type Screen = "app" | "quiz" | "result" | "survey" | "guide";
 type AuthMode = "login" | "register";
@@ -99,6 +103,7 @@ const fallbackDashboard: DashboardData = {
 const navItems: Array<{ id: StudentView; label: string; icon: IconName }> = [
   { id: "home", label: "Trang chủ", icon: "home" },
   { id: "classrooms", label: "Lớp học", icon: "school" },
+  { id: "extra_classes", label: "Lớp học thêm", icon: "sparkles" },
   { id: "exercises", label: "Bài tập", icon: "target" },
   { id: "roadmap", label: "Lộ trình", icon: "map" },
   { id: "compete", label: "Thi đấu", icon: "trophy" },
@@ -296,6 +301,9 @@ export default function SmartLotusApp() {
   const [initialIntel, setInitialIntel] = useState(50);
   const [quizMode, setQuizMode] = useState<QuizMode>("journey");
   const [activeAssignment, setActiveAssignment] = useState<Assignment | null>(null);
+  const [adaptiveModalAssignment, setAdaptiveModalAssignment] = useState<Assignment | null>(null);
+  const [personalizing, setPersonalizing] = useState(false);
+  const [forceAIPreference, setForceAIPreference] = useState(false);
   const [journeyFailed, setJourneyFailed] = useState(false);
   const [skipEligible, setSkipEligible] = useState(false);
   const [studyStreak, setStudyStreak] = useState(0);
@@ -312,6 +320,8 @@ export default function SmartLotusApp() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [classroomInvitations, setClassroomInvitations] = useState<ClassroomInvitation[]>([]);
+  const [teacherRequests, setTeacherRequests] = useState<StudentClassroomRequest[]>([]);
+  const [selectedRequestModal, setSelectedRequestModal] = useState<StudentClassroomRequest | null>(null);
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [toast, setToast] = useState("");
@@ -371,6 +381,32 @@ export default function SmartLotusApp() {
       window.clearInterval(timer);
     };
   }, [authenticated, role]);
+
+  const knownTeacherRequests = useRef(new Set<string>());
+
+  const fetchTeacherRequests = useCallback(async () => {
+    try {
+      const { requests } = await smartLotusApi.getClassroomRequests();
+      setTeacherRequests(requests);
+      const pending = requests.filter((r) => r.status === "pending");
+      if (pending.some((r) => !knownTeacherRequests.current.has(r.id))) {
+        setToast("Có học sinh gửi yêu cầu xin vào lớp học thêm mới!");
+      }
+      knownTeacherRequests.current = new Set(requests.map((r) => r.id));
+    } catch (error) {
+      console.error("Check classroom requests error", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!authenticated || (role !== "teacher" && role !== "admin")) return;
+    knownTeacherRequests.current = new Set();
+    void fetchTeacherRequests();
+    const timer = window.setInterval(() => void fetchTeacherRequests(), 20_000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [authenticated, role, fetchTeacherRequests]);
 
   const loadDashboard = useCallback(async (nextRole: Role) => {
     setLoading(true);
@@ -609,13 +645,14 @@ export default function SmartLotusApp() {
     }
   }
 
-  function startAssignment(assignment: Assignment) {
-    if (!assignment.questions?.length) {
+  function launchAssignmentQuiz(assignment: Assignment, customQuestions?: QuizQuestion[]) {
+    const qList = customQuestions || assignment.questions;
+    if (!qList?.length) {
       setToast("Bài tập này chưa có câu hỏi.");
       return;
     }
     setActiveAssignment(assignment);
-    setQuizQuestions(assignment.questions);
+    setQuizQuestions(qList);
     quizGenerationId.current += 1;
     quizInteracted.current = false;
     setQuizMode("assignment");
@@ -626,6 +663,45 @@ export default function SmartLotusApp() {
     setJourneyFailed(false);
     setSkipEligible(false);
     setScreen("quiz");
+  }
+
+  function startAssignment(assignment: Assignment) {
+    if (!assignment.questions?.length) {
+      setToast("Bài tập này chưa có câu hỏi.");
+      return;
+    }
+    // Nếu là bài tập thích ứng và chưa sinh câu hỏi riêng cho học sinh này
+    if (assignment.isAdaptive && !(assignment.questions[0] as any)?.personalizedFor) {
+      setAdaptiveModalAssignment(assignment);
+      return;
+    }
+    launchAssignmentQuiz(assignment);
+  }
+
+  async function handlePersonalizeAndStart(assignment: Assignment, themeName: string, forceAI = false) {
+    setPersonalizing(true);
+    try {
+      const res = await smartLotusApi.personalizeAssignment(assignment.id, { interest: themeName, forceAI });
+      const updatedAssignment: Assignment = {
+        ...assignment,
+        questions: res.questions,
+        personalizedTheme: res.studentProfile?.interest,
+        personalizedForStudent: res.studentProfile?.studentName,
+      };
+      setAdaptiveModalAssignment(null);
+      launchAssignmentQuiz(updatedAssignment, res.questions);
+      if (res.sourceMode === "ai") {
+        setToast(`🤖 Đề thi do AI Ollama sáng tác độc quyền cho ${res.studentProfile?.studentName || "bạn"} (Chủ đề: ${res.studentProfile?.interest})!`);
+      } else {
+        setToast(`🎯 Đề thi thích ứng thông minh (38+ dạng bài) đã tối ưu cho ${res.studentProfile?.studentName || "bạn"} (Chủ đề: ${res.studentProfile?.interest})!`);
+      }
+    } catch {
+      setAdaptiveModalAssignment(null);
+      launchAssignmentQuiz(assignment);
+      setToast("Đang làm bài với đề thi tiêu chuẩn.");
+    } finally {
+      setPersonalizing(false);
+    }
   }
 
   async function skipLesson() {
@@ -1041,7 +1117,29 @@ export default function SmartLotusApp() {
               <button className={`nav-item ${teacherView === "overview" ? "active" : ""}`} onClick={() => { setTeacherView("overview"); setMobileOpen(false); }}><Icon name="chart" /><span>Tổng quan lớp</span></button>
               <button className={`nav-item ${teacherView === "classes" ? "active" : ""}`} onClick={() => { setTeacherView("classes"); setMobileOpen(false); }}><Icon name="school" /><span>Lớp học</span></button>
               <button className={`nav-item ${teacherView === "assignments" ? "active" : ""}`} onClick={() => { setTeacherView("assignments"); setMobileOpen(false); }}><Icon name="book" /><span>Bài tập</span></button>
-              <button className="nav-item"><Icon name="wand" /><span>Tạo câu hỏi AI</span><span className="soon-chip">Sớm</span></button>
+              <button
+                className={`nav-item ${teacherView === "extra_classes" ? "active" : ""}`}
+                onClick={() => { setTeacherView("extra_classes"); setMobileOpen(false); }}
+              >
+                <Icon name="users" />
+                <span>Lớp học thêm</span>
+                {teacherRequests.filter((r) => r.status === "pending").length > 0 && (
+                  <span
+                    style={{
+                      marginLeft: "auto",
+                      background: "#ef4444",
+                      color: "#ffffff",
+                      fontSize: "10px",
+                      fontWeight: 800,
+                      padding: "2px 7px",
+                      borderRadius: "999px",
+                      boxShadow: "0 2px 6px rgba(239, 68, 68, 0.35)",
+                    }}
+                  >
+                    {teacherRequests.filter((r) => r.status === "pending").length}
+                  </span>
+                )}
+              </button>
             </>
           ) : (
             <>
@@ -1087,7 +1185,19 @@ export default function SmartLotusApp() {
             <div className="mobile-logo"><LotusLogo compact /></div>
             <div className="page-heading">
               <span>{role === "student" ? "Không gian học tập" : role === "teacher" ? "Trung tâm giáo viên" : "Bảng điều hành"}</span>
-              <strong>{role === "student" ? navItems.find((item) => item.id === view)?.label : role === "teacher" ? teacherView === "overview" ? "Tổng quan lớp" : teacherView === "classes" ? "Lớp học" : "Bài tập" : "Quản trị hệ thống"}</strong>
+              <strong>
+                {role === "student"
+                  ? navItems.find((item) => item.id === view)?.label
+                  : role === "teacher"
+                  ? teacherView === "overview"
+                    ? "Tổng quan lớp"
+                    : teacherView === "classes"
+                    ? "Lớp học"
+                    : teacherView === "extra_classes"
+                    ? "Lớp học thêm"
+                    : "Bài tập"
+                  : "Quản trị hệ thống"}
+              </strong>
             </div>
           </div>
           <div className="topbar-actions">
@@ -1100,7 +1210,7 @@ export default function SmartLotusApp() {
             <div className="notification-wrap">
               <button
                 className="icon-button notification-button"
-                aria-label={role === "student" ? "Thông báo lời mời vào lớp" : "Thông báo"}
+                aria-label={role === "student" ? "Thông báo lời mời vào lớp" : "Thông báo yêu cầu học sinh"}
                 aria-expanded={notificationsOpen}
                 aria-haspopup="dialog"
                 onClick={() => {
@@ -1109,7 +1219,8 @@ export default function SmartLotusApp() {
                 }}
               >
                 <Icon name="bell" />
-                {role === "student" && classroomInvitations.length > 0 && <span />}
+                {((role === "student" && classroomInvitations.length > 0) ||
+                  (role === "teacher" && teacherRequests.filter((r) => r.status === "pending").length > 0)) && <span />}
               </button>
               {notificationsOpen && (
                 <div className="notification-panel" role="dialog" aria-label="Thông báo">
@@ -1117,6 +1228,9 @@ export default function SmartLotusApp() {
                     <strong>Thông báo</strong>
                     {role === "student" && classroomInvitations.length > 0 && (
                       <span>{classroomInvitations.length} mới</span>
+                    )}
+                    {role === "teacher" && teacherRequests.filter((r) => r.status === "pending").length > 0 && (
+                      <span>{teacherRequests.filter((r) => r.status === "pending").length} mới</span>
                     )}
                   </div>
                   {role === "student" && classroomInvitations.length > 0 ? (
@@ -1136,6 +1250,28 @@ export default function SmartLotusApp() {
                             <small>{invitation.teacherName} · {invitation.subject}</small>
                             <time dateTime={invitation.createdAt}>
                               {new Intl.DateTimeFormat("vi-VN", { day: "numeric", month: "short" }).format(new Date(invitation.createdAt))}
+                            </time>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : role === "teacher" && teacherRequests.filter((r) => r.status === "pending").length > 0 ? (
+                    <div className="notification-list">
+                      {teacherRequests.filter((r) => r.status === "pending").map((req) => (
+                        <button
+                          className="notification-item unread"
+                          key={req.id}
+                          onClick={() => {
+                            setSelectedRequestModal(req);
+                            setNotificationsOpen(false);
+                          }}
+                        >
+                          <i className="notification-item-dot" />
+                          <span className="notification-item-copy">
+                            <strong>{req.student.displayName} xin vào lớp</strong>
+                            <small>Lớp {req.classroom.name} · Mã HS: {req.student.studentCode}</small>
+                            <time dateTime={req.createdAt}>
+                              {new Intl.DateTimeFormat("vi-VN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(req.createdAt))}
                             </time>
                           </span>
                         </button>
@@ -1172,7 +1308,24 @@ export default function SmartLotusApp() {
         >
           {loading && <div className="loading-line" />}
           {role === "student" ? (
-            <StudentContent view={view} dashboard={dashboard} greetingName={greetingName} todayLabel={todayLabel} evaluation={evaluation} initialIntel={initialIntel} todayGoal={todayGoal} studyStreak={studyStreak} attemptHistory={attemptHistory} onStartQuiz={(lessonNumber, attemptMode) => void startQuiz("journey", lessonNumber, attemptMode)} onStartReview={() => void startQuiz("review")} onStartDemo={() => void startQuiz("demo")} onOpenExercises={() => setView("exercises")} onOpenCompetition={() => setView("compete")} onStartAssignment={startAssignment} />
+            <StudentContent
+              view={view}
+              dashboard={dashboard}
+              greetingName={greetingName}
+              todayLabel={todayLabel}
+              evaluation={evaluation}
+              initialIntel={initialIntel}
+              todayGoal={todayGoal}
+              studyStreak={studyStreak}
+              attemptHistory={attemptHistory}
+              onStartQuiz={(lessonNumber, attemptMode) => void startQuiz("journey", lessonNumber, attemptMode)}
+              onStartReview={() => void startQuiz("review")}
+              onStartDemo={() => void startQuiz("demo")}
+              onOpenExercises={() => setView("exercises")}
+              onOpenCompetition={() => setView("compete")}
+              onStartAssignment={startAssignment}
+              onToast={setToast}
+            />
           ) : role === "teacher" ? (
             teacherView === "overview" ? (
               <TeacherOverview
@@ -1183,6 +1336,13 @@ export default function SmartLotusApp() {
               />
             ) : teacherView === "classes" ? (
               <Classroom />
+            ) : teacherView === "extra_classes" ? (
+              <TeacherExtraClasses
+                requests={teacherRequests}
+                onRefresh={fetchTeacherRequests}
+                onOpenDetail={setSelectedRequestModal}
+                onToast={setToast}
+              />
             ) : (
               <AssignmentBuilder onBack={() => setTeacherView("overview")} onToast={setToast} />
             )
@@ -1191,6 +1351,186 @@ export default function SmartLotusApp() {
           )}
         </main>
       </div>
+      {adaptiveModalAssignment && (
+        <div className="student-modal-backdrop" onClick={() => !personalizing && setAdaptiveModalAssignment(null)}>
+          <div
+            className="card"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "min(560px, 94vw)",
+              padding: "24px 26px",
+              borderRadius: "20px",
+              background: "#ffffff",
+              boxShadow: "0 25px 70px rgba(76, 29, 149, 0.22)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span
+                  style={{
+                    background: "#ede9fe",
+                    color: "#6d28d9",
+                    fontSize: "11px",
+                    fontWeight: 800,
+                    padding: "4px 10px",
+                    borderRadius: "8px",
+                  }}
+                >
+                  ✨ AI RAG ADAPTIVE
+                </span>
+                <strong style={{ fontSize: "16px", color: "#3b0764" }}>Đề thi cá nhân hóa cho bạn</strong>
+              </div>
+              {!personalizing && (
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => setAdaptiveModalAssignment(null)}
+                  aria-label="Đóng"
+                >
+                  <Icon name="close" />
+                </button>
+              )}
+            </div>
+
+            <p style={{ margin: "0 0 14px", fontSize: "13px", color: "#4b5563", lineHeight: 1.5 }}>
+              Chào bé <strong>{greetingName}</strong>! Hôm nay bé muốn cùng phiêu lưu với chủ đề nào? AI sẽ tự động điều chỉnh câu hỏi vừa sức và lồng ghép hình ảnh Emoji theo chủ đề bé thích:
+            </p>
+
+            {/* Tùy chọn nguồn sinh đề */}
+            <div
+              style={{
+                marginBottom: "16px",
+                padding: "10px 14px",
+                borderRadius: "12px",
+                background: "#f0fdf4",
+                border: "1.5px solid #86efac",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+                gap: "10px",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{ fontSize: "16px" }}>🎯</span>
+                <div>
+                  <strong style={{ fontSize: "11.5px", color: "#166534", display: "block" }}>
+                    Kho 38+ dạng bài tư duy thích ứng GDPT 2018 (Phản hồi tức thì)
+                  </strong>
+                  <small style={{ fontSize: "10.5px", color: "#15803d" }}>
+                    Đề toán biến hóa đa dạng theo 3 mức học lực: Cần hỗ trợ, Ổn định, Xuất sắc
+                  </small>
+                </div>
+              </div>
+              <label
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "7px",
+                  cursor: "pointer",
+                  fontSize: "11.5px",
+                  fontWeight: 700,
+                  color: forceAIPreference ? "#6d28d9" : "#374151",
+                  background: forceAIPreference ? "#faf5ff" : "#ffffff",
+                  padding: "6px 12px",
+                  borderRadius: "8px",
+                  border: forceAIPreference ? "1.5px solid #a855f7" : "1px solid #d1d5db",
+                  userSelect: "none",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={forceAIPreference}
+                  onChange={(e) => setForceAIPreference(e.target.checked)}
+                  style={{ accentColor: "#7c3aed", width: "15px", height: "15px" }}
+                />
+                <span>⚡ Ưu tiên AI Ollama sáng tác mới</span>
+              </label>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "10px", marginBottom: "18px" }}>
+              {studentThemes.map((th) => (
+                <button
+                  key={th.id}
+                  type="button"
+                  disabled={personalizing}
+                  onClick={() => void handlePersonalizeAndStart(adaptiveModalAssignment, th.label, forceAIPreference)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    padding: "12px 14px",
+                    borderRadius: "14px",
+                    border: "1.5px solid #e9d5ff",
+                    background: "#faf5ff",
+                    cursor: personalizing ? "wait" : "pointer",
+                    textAlign: "left",
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  <span style={{ fontSize: "24px" }}>{th.emoji}</span>
+                  <div>
+                    <strong style={{ display: "block", fontSize: "12px", color: "#581c87" }}>{th.label}</strong>
+                    <small style={{ fontSize: "10px", color: "#7e22ce" }}>{th.examples}</small>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {personalizing ? (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "10px",
+                  padding: "14px",
+                  background: "#f5f3ff",
+                  borderRadius: "12px",
+                  color: "#6d28d9",
+                  fontWeight: 750,
+                  fontSize: "13px",
+                  border: "1.5px solid #ddd6fe",
+                }}
+              >
+                <Icon name="sparkles" size={18} />
+                <span>AI Lotus đang phân tích năng lực và soạn 10 câu hỏi riêng cho bé...</span>
+              </div>
+            ) : (
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    const assign = adaptiveModalAssignment;
+                    setAdaptiveModalAssignment(null);
+                    launchAssignmentQuiz(assign);
+                  }}
+                  style={{ minHeight: "38px", height: "38px", padding: "0 14px", fontSize: "12px" }}
+                >
+                  Dùng đề tiêu chuẩn
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => void handlePersonalizeAndStart(adaptiveModalAssignment, studentThemes[0].label, forceAIPreference)}
+                  style={{ minHeight: "38px", height: "38px", padding: "0 16px", fontSize: "12px" }}
+                >
+                  ✨ Bắt đầu ngay
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {selectedRequestModal && (
+        <StudentRequestModal
+          request={selectedRequestModal}
+          onClose={() => setSelectedRequestModal(null)}
+          onProcessed={() => void fetchTeacherRequests()}
+          onToast={setToast}
+        />
+      )}
       {profileEditorOpen && <ProfileEditor user={dashboard.user} onClose={() => setProfileEditorOpen(false)} onSaved={updateProfile} />}
       {toast && <div className="toast"><Icon name="check" />{toast}</div>}
     </div>
@@ -1674,10 +2014,45 @@ function OnboardingGuide({ onStart }: { onStart: () => void }) {
   );
 }
 
-function StudentContent({ view, dashboard, greetingName, todayLabel, evaluation, initialIntel, todayGoal, studyStreak, attemptHistory, onStartQuiz, onStartReview, onStartDemo, onOpenExercises, onOpenCompetition, onStartAssignment }: { view: StudentView; dashboard: DashboardData; greetingName: string; todayLabel: string; evaluation: PathEvaluation | null; initialIntel: number; todayGoal: TodayGoal; studyStreak: number; attemptHistory: AttemptSummary[]; onStartQuiz: (lessonNumber?: number, mode?: AttemptMode) => void; onStartReview: () => void; onStartDemo: () => void; onOpenExercises: () => void; onOpenCompetition: () => void; onStartAssignment: (assignment: Assignment) => void }) {
+function StudentContent({
+  view,
+  dashboard,
+  greetingName,
+  todayLabel,
+  evaluation,
+  initialIntel,
+  todayGoal,
+  studyStreak,
+  attemptHistory,
+  onStartQuiz,
+  onStartReview,
+  onStartDemo,
+  onOpenExercises,
+  onOpenCompetition,
+  onStartAssignment,
+  onToast,
+}: {
+  view: StudentView;
+  dashboard: DashboardData;
+  greetingName: string;
+  todayLabel: string;
+  evaluation: PathEvaluation | null;
+  initialIntel: number;
+  todayGoal: TodayGoal;
+  studyStreak: number;
+  attemptHistory: AttemptSummary[];
+  onStartQuiz: (lessonNumber?: number, mode?: AttemptMode) => void;
+  onStartReview: () => void;
+  onStartDemo: () => void;
+  onOpenExercises: () => void;
+  onOpenCompetition: () => void;
+  onStartAssignment: (assignment: Assignment) => void;
+  onToast: (msg: string) => void;
+}) {
   const currentIntel = evaluation?.intelligenceScore ?? initialIntel;
   const journeyLocked = initialIntel < 30 && currentIntel < 50;
   if (view === "classrooms") return <StudentClassrooms onStartAssignment={onStartAssignment} />;
+  if (view === "extra_classes") return <StudentExtraClasses onToast={onToast} />;
   if (view === "exercises") return <ExerciseMapView onStartQuiz={onStartQuiz} onStartReview={onStartReview} onStartDemo={onStartDemo} initialCleared={clearedLessonsBefore(evaluation)} journeyLocked={journeyLocked} intelScore={currentIntel} lotusPoints={dashboard.user.lotusPoints} />;
   if (view === "roadmap") return <RoadmapView onStartQuiz={onStartQuiz} evaluation={evaluation} />;
   if (view === "compete") return <CompetitionView weeklyLeaderboard={dashboard.weeklyLeaderboard} currentAvatar={dashboard.user.avatar} />;
@@ -3060,6 +3435,43 @@ function QuizExperience({ quizQuestions, onExit, onComplete, onInteract, isDemo 
 
       <div className="tt-stage">
         <div key={index} className="tt-question">
+          {((question as any)?.personalizedFor || (quizQuestions[0] as any)?.personalizedFor) && (
+            <div
+              style={{
+                marginBottom: "10px",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "8px",
+                padding: "5px 14px",
+                background: "linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)",
+                border: "1.5px solid #c084fc",
+                borderRadius: "999px",
+                color: "#581c87",
+                fontSize: "12px",
+                fontWeight: 700,
+                boxShadow: "0 2px 8px rgba(124, 58, 237, 0.08)",
+                flexWrap: "wrap",
+              }}
+            >
+              <span>✨ Đề riêng của <strong>{((question as any)?.personalizedFor || (quizQuestions[0] as any)?.personalizedFor)?.studentName}</strong></span>
+              <span>·</span>
+              <span>Chủ đề: {((question as any)?.personalizedFor || (quizQuestions[0] as any)?.personalizedFor)?.interest}</span>
+              <span>·</span>
+              <span style={{ color: "#7c3aed" }}>
+                Mức độ: {((question as any)?.personalizedFor || (quizQuestions[0] as any)?.personalizedFor)?.status || "Thích ứng"}
+              </span>
+              <span>·</span>
+              {((question as any)?.personalizedFor?.generatedBy === "ai" || (quizQuestions[0] as any)?.personalizedFor?.generatedBy === "ai") ? (
+                <span style={{ background: "#ecfdf5", color: "#065f46", border: "1px solid #6ee7b7", padding: "1px 8px", borderRadius: "999px", fontSize: "11px", fontWeight: 800 }}>
+                  🤖 AI Ollama sáng tác
+                </span>
+              ) : (
+                <span style={{ background: "#ede9fe", color: "#5b21b6", border: "1px solid #c4b5fd", padding: "1px 8px", borderRadius: "999px", fontSize: "11px", fontWeight: 800 }}>
+                  🎯 Đề thích ứng 38+ dạng bài
+                </span>
+              )}
+            </div>
+          )}
           <div className="tt-chips">
             <span className={`tt-phase-chip ${question.phase}`}>
               <Icon name={question.phase === "normal" ? "book" : "flame"} size={14}/>

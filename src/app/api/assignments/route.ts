@@ -7,7 +7,7 @@ import {
   classrooms,
 } from "@/db/schema";
 import { validQuestions } from "@/lib/assignment-validation";
-import { isAnswerModeCompatible } from "@/lib/learning-data";
+import { isAnswerModeCompatible, type QuizQuestion } from "@/lib/learning-data";
 import { getAuthenticatedSupabaseUser, getOrCreateAppUser } from "@/lib/server-user";
 
 export const dynamic = "force-dynamic";
@@ -46,22 +46,27 @@ export async function GET(request: Request) {
         : [];
       const counts = new Map(members.map((row) => [row.classroomId, row.memberCount]));
       return Response.json({
-        assignments: rows.map((row) => ({
-          id: String(row.assignment.id),
-          title: row.assignment.title,
-          topic: row.assignment.topic,
-          curriculumLevel: row.assignment.curriculumLevel,
-          dueDate: row.assignment.dueAt.toISOString(),
-          durationMinutes: row.assignment.durationMinutes,
-          questions: row.assignment.questions,
-          createdAt: row.assignment.createdAt.toISOString(),
-          classroomId: String(row.assignment.classroomId),
-          classroom: { ...row.classroom, id: String(row.classroom.id) },
-          totalStudents: counts.get(row.classroom.id) ?? 0,
-          submittedCount: row.submissionCount,
-          gradedCount: 0,
-          className: row.classroom.label,
-        })),
+        assignments: rows.map((row) => {
+          const qList = (row.assignment.questions || []) as any;
+          const isAdaptive = Boolean(qList[0]?._adaptiveMeta?.isAdaptive || qList[0]?.isAdaptive);
+          return {
+            id: String(row.assignment.id),
+            title: row.assignment.title,
+            topic: row.assignment.topic,
+            curriculumLevel: row.assignment.curriculumLevel,
+            dueDate: row.assignment.dueAt.toISOString(),
+            durationMinutes: row.assignment.durationMinutes,
+            questions: row.assignment.questions,
+            isAdaptive,
+            createdAt: row.assignment.createdAt.toISOString(),
+            classroomId: String(row.assignment.classroomId),
+            classroom: { ...row.classroom, id: String(row.classroom.id) },
+            totalStudents: counts.get(row.classroom.id) ?? 0,
+            submittedCount: row.submissionCount,
+            gradedCount: 0,
+            className: row.classroom.label,
+          };
+        }),
       });
     }
 
@@ -90,24 +95,33 @@ export async function GET(request: Request) {
       .where(eq(classroomMemberships.studentId, user.id))
       .orderBy(asc(classroomAssignments.dueAt));
     return Response.json({
-      assignments: rows.map((row) => ({
-        id: String(row.assignment.id),
-        title: row.assignment.title,
-        topic: row.assignment.topic,
-        curriculumLevel: row.assignment.curriculumLevel,
-        dueDate: row.assignment.dueAt.toISOString(),
-        durationMinutes: row.assignment.durationMinutes,
-        questions: row.assignment.questions,
-        createdAt: row.assignment.createdAt.toISOString(),
-        classroomId: String(row.assignment.classroomId),
-        classroom: { ...row.classroom, id: String(row.classroom.id) },
-        submission: row.submission ? {
-          score: row.submission.score,
-          correctAnswers: row.submission.correctAnswers,
-          totalQuestions: row.submission.totalQuestions,
-          submittedAt: row.submission.submittedAt,
-        } : null,
-      })),
+      assignments: rows.map((row) => {
+        const qList = (row.assignment.questions || []) as any;
+        const isAdaptive = Boolean(qList[0]?._adaptiveMeta?.isAdaptive || qList[0]?.isAdaptive);
+        const studentVariant = qList[0]?._variants?.[user.id];
+        const questions = studentVariant || row.assignment.questions;
+        return {
+          id: String(row.assignment.id),
+          title: row.assignment.title,
+          topic: row.assignment.topic,
+          curriculumLevel: row.assignment.curriculumLevel,
+          dueDate: row.assignment.dueAt.toISOString(),
+          durationMinutes: row.assignment.durationMinutes,
+          questions,
+          isAdaptive,
+          personalizedForStudent: studentVariant ? user.displayName : undefined,
+          personalizedTheme: studentVariant?.[0]?.personalizedFor?.interest,
+          createdAt: row.assignment.createdAt.toISOString(),
+          classroomId: String(row.assignment.classroomId),
+          classroom: { ...row.classroom, id: String(row.classroom.id) },
+          submission: row.submission ? {
+            score: row.submission.score,
+            correctAnswers: row.submission.correctAnswers,
+            totalQuestions: row.submission.totalQuestions,
+            submittedAt: row.submission.submittedAt,
+          } : null,
+        };
+      }),
     });
   } catch (error) {
     console.error("Load assignments error", error);
@@ -161,6 +175,13 @@ export async function POST(request: Request) {
       .limit(1);
     if (!classroom) return Response.json({ message: "Không tìm thấy lớp học của bạn" }, { status: 404 });
 
+    const isAdaptive = Boolean(value.isAdaptive);
+    const questionsInput = (value.questions as QuizQuestion[]).map((q, idx) => ({
+      ...q,
+      isAdaptive,
+      ...(idx === 0 ? { _adaptiveMeta: { isAdaptive: true } } : {}),
+    }));
+
     const [created] = await db
       .insert(classroomAssignments)
       .values({
@@ -170,7 +191,7 @@ export async function POST(request: Request) {
         curriculumLevel: Number(value.curriculumLevel),
         dueAt,
         durationMinutes: Number(value.durationMinutes),
-        questions: value.questions,
+        questions: questionsInput as any,
       })
       .returning();
     return Response.json({
@@ -182,6 +203,7 @@ export async function POST(request: Request) {
         dueDate: created.dueAt.toISOString(),
         durationMinutes: created.durationMinutes,
         questions: created.questions,
+        isAdaptive,
         classroomId: String(created.classroomId),
         classroom: { id: String(classroom.id), name: classroom.name, label: classroom.label },
         totalStudents: classroom.studentCount,

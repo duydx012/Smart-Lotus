@@ -1,5 +1,16 @@
 export type StudentStatus = "Xuất sắc" | "Đang tiến bộ" | "Ổn định" | "Cần hỗ trợ";
 
+export const studentThemes = [
+  { id: "animals", label: "Động vật dễ thương", emoji: "🦁", examples: "🐰 🐶 🐱 🐥 🥕 🐟" },
+  { id: "dinosaurs", label: "Khủng long phiêu lưu", emoji: "🦖", examples: "🦖 🦕 🥚 🌋 🌿" },
+  { id: "space", label: "Vũ trụ & Phi thuyền", emoji: "🚀", examples: "🚀 ⭐ 🪐 🛸 👨‍🚀" },
+  { id: "vehicles", label: "Xe cộ & Giao thông", emoji: "🚗", examples: "🚗 🏎️ 🚌 ✈️ 🚂" },
+  { id: "fairytale", label: "Công chúa & Phép thuật", emoji: "👑", examples: "👑 ✨ 🏰 🦄 🎀" },
+  { id: "sweets", label: "Kẹo ngọt & Trái cây", emoji: "🍭", examples: "🍎 🍓 🍌 🍭 🧁" },
+] as const;
+
+export type StudentThemeId = (typeof studentThemes)[number]["id"];
+
 export type Student = {
   id: string;
   studentCode?: string;
@@ -15,6 +26,7 @@ export type Student = {
   totalLessons: number;
   lastActive: string; // YYYY-MM-DD
   status: StudentStatus;
+  interest?: string;
 };
 
 export const studentStatuses: StudentStatus[] = ["Xuất sắc", "Đang tiến bộ", "Ổn định", "Cần hỗ trợ"];
@@ -46,6 +58,25 @@ export type Classroom = {
   joinCode?: string;
   teacherName?: string;
   studentCount?: number;
+};
+
+export type ClassLearningProfile = {
+  classroomId: number;
+  className: string;
+  classLabel: string;
+  displayClassName: string;
+  subject: string;
+  totalStudents: number;
+  intelligenceScore: number;
+  learningSpeed: "fast" | "moderate" | "slow";
+  speedLabel: string;
+  averageSecondsPerQuestion: number;
+  averageScore: number;
+  accuracyRate: number;
+  isNewClass: boolean;
+  recommendedDifficulties: Array<"A" | "B" | "C" | "D" | "E">;
+  summary: string;
+  pedagogicalAdvice: string;
 };
 
 export const classColorPalette = ["purple", "teal", "pink", "amber", "blue", "green"];

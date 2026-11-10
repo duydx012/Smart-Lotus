@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import type { Assignment } from "@/lib/assignment-data";
-import type { Classroom, Student } from "@/lib/student-data";
+import type { Classroom, Student, ClassLearningProfile } from "@/lib/student-data";
 
 export type Role = "student" | "teacher" | "admin";
 
@@ -69,7 +69,10 @@ export type AttemptPayload = {
   answers: Array<{ questionId: number; answer: string; correct: boolean }>;
 };
 
+export type { ClassLearningProfile };
+
 export type ClassroomDetails = {
+  classProfile?: ClassLearningProfile;
   classroom: Classroom;
   students: Student[];
 };
@@ -82,6 +85,61 @@ export type ClassroomInvitation = {
   subject: string;
   teacherName: string;
   createdAt: string;
+};
+
+export type ExtraClassroom = {
+  id: string;
+  name: string;
+  label: string;
+  subject: string;
+  description: string;
+  color: string;
+  studentCount: number;
+  membershipStatus: "joined" | "not_joined";
+  requestStatus: "pending" | "accepted" | "declined" | "none";
+  invitationId?: string;
+};
+
+export type ExtraClassTeacher = {
+  id: string;
+  displayName: string;
+  email: string;
+  avatar: string;
+  avatarUrl?: string | null;
+  school?: string | null;
+  province?: string | null;
+  district?: string | null;
+  classrooms: ExtraClassroom[];
+};
+
+export type StudentClassroomRequest = {
+  id: string;
+  status: "pending" | "accepted" | "declined";
+  createdAt: string;
+  respondedAt?: string | null;
+  student: {
+    id: string;
+    studentCode: string;
+    displayName: string;
+    email: string;
+    avatar: string;
+    avatarUrl?: string | null;
+    phone?: string | null;
+    school?: string | null;
+    schoolLevel?: string | null;
+    grade?: string | null;
+    className?: string | null;
+    birthDate?: string | null;
+    lotusPoints: number;
+    score?: number | null;
+  };
+  classroom: {
+    id: string;
+    name: string;
+    label: string;
+    subject: string;
+    color: string;
+  };
 };
 
 export type AssignmentProject = {
@@ -161,11 +219,64 @@ export const smartLotusApi = {
       body: JSON.stringify({ studentCode }),
     });
   },
+  seedClassroomStudents(classroomId: string | number) {
+    return request<{ ok: true; message: string; count: number }>(`/api/classrooms/${encodeURIComponent(String(classroomId))}/seed-students`, {
+      method: "POST",
+    });
+  },
+  addStudentToClassroom(
+    classroomId: string | number,
+    data: {
+      mode?: "create" | "byCode";
+      studentCode?: string;
+      fullName?: string;
+      email?: string;
+      birthDate?: string;
+      gender?: "Nam" | "Nữ";
+      parentName?: string;
+      parentPhone?: string;
+      score?: number;
+    }
+  ) {
+    return request<{ ok: true; message: string; student: Student }>(
+      `/api/classrooms/${encodeURIComponent(String(classroomId))}/students`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      }
+    );
+  },
+  removeStudentFromClassroom(classroomId: string | number, studentId: string | number) {
+    return request<{ ok: true; message: string }>(
+      `/api/classrooms/${encodeURIComponent(String(classroomId))}/students?studentId=${encodeURIComponent(String(studentId))}`,
+      {
+        method: "DELETE",
+      }
+    );
+  },
   getClassroomInvitations() {
     return request<{ invitations: ClassroomInvitation[] }>("/api/classroom-invitations");
   },
   respondToClassroomInvitation(invitationId: string, decision: "accepted" | "declined") {
     return request<{ invitation: { id: string; status: string } }>(`/api/classroom-invitations/${encodeURIComponent(invitationId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ decision }),
+    });
+  },
+  getExtraClasses() {
+    return request<{ teachers: ExtraClassTeacher[] }>("/api/extra-classes");
+  },
+  requestToJoinExtraClass(classroomId: string | number) {
+    return request<{ ok: true; message: string; invitationId: string }>("/api/extra-classes/request", {
+      method: "POST",
+      body: JSON.stringify({ classroomId: Number(classroomId) }),
+    });
+  },
+  getClassroomRequests() {
+    return request<{ requests: StudentClassroomRequest[] }>("/api/classroom-requests");
+  },
+  respondToClassroomRequest(requestId: string | number, decision: "accepted" | "declined") {
+    return request<{ ok: true; status: string; message: string }>(`/api/classroom-requests/${encodeURIComponent(String(requestId))}`, {
       method: "PATCH",
       body: JSON.stringify({ decision }),
     });
@@ -214,10 +325,28 @@ export const smartLotusApi = {
     dueAt: string;
     durationMinutes: number;
     questions: import("./learning-data").QuizQuestion[];
+    isAdaptive?: boolean;
   }) {
     return request<{ assignment: Assignment }>("/api/assignments", {
       method: "POST",
       body: JSON.stringify(input),
+    });
+  },
+  personalizeAssignment(assignmentId: string, input?: { interest?: string; forceAI?: boolean }) {
+    return request<{
+      ok: true;
+      isExisting: boolean;
+      sourceMode?: "ai" | "dynamic-multi-template";
+      questions: import("./learning-data").QuizQuestion[];
+      studentProfile: {
+        studentName: string;
+        status: string;
+        interest: string;
+        sourceMode?: "ai" | "dynamic-multi-template";
+      };
+    }>(`/api/assignments/${encodeURIComponent(assignmentId)}/personalize`, {
+      method: "POST",
+      body: JSON.stringify(input || {}),
     });
   },
   submitAssignment(assignmentId: string, input: {
@@ -242,8 +371,25 @@ export const smartLotusApi = {
       body: JSON.stringify(profile),
     });
   },
-  generateQuiz(input: { topic: string; curriculumLevel: number; difficulties: Array<"A" | "B" | "C" | "D" | "E">; count?: number; intelligenceScore?: number; variationSeed?: string; excludePrompts?: string[] }) {
-    return request<{ source: "ai" | "question-bank"; questions: import("./learning-data").QuizQuestion[] }>("/api/generate-quiz", {
+  generateQuiz(input: {
+    topic: string;
+    curriculumLevel: number;
+    difficulties?: Array<"A" | "B" | "C" | "D" | "E">;
+    count?: number;
+    intelligenceScore?: number;
+    variationSeed?: string;
+    excludePrompts?: string[];
+    classroomId?: string | number;
+    classProfile?: ClassLearningProfile;
+    referenceDocument?: { name?: string; content: string };
+  }) {
+    return request<{
+      source: "ai" | "question-bank";
+      questions: import("./learning-data").QuizQuestion[];
+      classProfile?: ClassLearningProfile;
+      ragSummary?: string;
+      referenceDocName?: string;
+    }>("/api/generate-quiz", {
       method: "POST",
       body: JSON.stringify(input),
     });

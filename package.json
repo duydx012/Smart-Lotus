@@ -8,6 +8,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "db:seed": "node --experimental-strip-types scripts/seed-curriculum.mjs",
+    "db:seed:students": "node scripts/seed-students-to-class.mjs",
     "db:push": "drizzle-kit push",
     "db:migrate:legacy": "node scripts/migrate-legacy-data.mjs"
   },

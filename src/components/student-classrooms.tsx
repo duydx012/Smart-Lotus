@@ -176,12 +176,35 @@ export default function StudentClassrooms({ onStartAssignment }: { onStartAssign
                 ) : (assignmentsByClass.get(classroom.id) ?? []).map((assignment) => (
                   <div className="student-assignment-row" key={assignment.id}>
                     <div>
-                      <strong>{assignment.title}</strong>
-                      <small>{assignment.topic} · Hạn nộp {new Date(assignment.dueDate).toLocaleString("vi-VN")}</small>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                        <strong>{assignment.title}</strong>
+                        {assignment.isAdaptive && (
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              background: "linear-gradient(135deg, #f5f3ff, #ede9fe)",
+                              color: "#6d28d9",
+                              border: "1px solid #ddd6fe",
+                              fontSize: "10px",
+                              fontWeight: 750,
+                              padding: "2px 7px",
+                              borderRadius: "6px",
+                            }}
+                          >
+                            <Icon name="sparkles" size={11} /> Đề cá nhân hóa AI
+                          </span>
+                        )}
+                      </div>
+                      <small>
+                        {assignment.topic} · Hạn nộp {new Date(assignment.dueDate).toLocaleString("vi-VN")}
+                        {assignment.personalizedTheme && ` · Đề theo sở thích: ${assignment.personalizedTheme}`}
+                      </small>
                       {assignment.submission && <small>Đã nộp · {assignment.submission.correctAnswers}/{assignment.submission.totalQuestions} câu đúng</small>}
                     </div>
                     <button className="primary-button" disabled={Boolean(assignment.submission) || !assignment.questions?.length} onClick={() => onStartAssignment(assignment)}>
-                      {assignment.submission ? "Đã nộp" : "Làm bài"}
+                      {assignment.submission ? "Đã nộp" : (assignment.isAdaptive ? "✨ Làm bài" : "Làm bài")}
                     </button>
                   </div>
                 ))}

@@ -9,6 +9,8 @@ import {
   type PathEvaluation,
   type PlacementResult,
 } from "./placement";
+import type { ClassLearningProfile } from "./student-data";
+import { buildRagContext, type ReferenceDocument } from "./rag-service";
 
 export type GenerateQuizInput = {
   topic: string;
@@ -19,11 +21,15 @@ export type GenerateQuizInput = {
   intelligenceScore?: number;
   variationSeed?: string;
   excludePrompts?: string[];
+  classProfile?: ClassLearningProfile;
+  referenceDocument?: ReferenceDocument;
 };
 
 export type GeneratedQuiz = {
   source: "ai" | "question-bank";
   questions: QuizQuestion[];
+  ragSummary?: string;
+  referenceDocName?: string;
 };
 
 type OllamaMessage = {
@@ -434,6 +440,9 @@ function generateSmartQuestions(input: GenerateQuizInput, count: number): QuizQu
     tries += 1;
     const generator = generators[randInt(0, generators.length - 1)];
     const item = generator();
+    if (diffs.length > 0 && !diffs.includes(item.difficulty as Difficulty) && tries < 200) {
+      continue;
+    }
     if (seenPrompts.has(item.prompt)) continue;
     seenPrompts.add(item.prompt);
 
@@ -478,6 +487,15 @@ function fallbackQuiz(count: number, input?: GenerateQuizInput): GeneratedQuiz {
 export async function generateQuiz(input: GenerateQuizInput): Promise<GeneratedQuiz> {
   const count = Math.max(1, Math.min(20, input.count ?? 10));
   const normalCount = Math.ceil(count / 2);
+
+  // Khởi tạo RAG Pipeline (Truy xuất chuẩn GDPT 2018 + Tài liệu giáo viên + Hồ sơ năng lực lớp)
+  const rag = buildRagContext({
+    topic: input.topic,
+    curriculumLevel: input.curriculumLevel,
+    difficulties: input.difficulties,
+    classProfile: input.classProfile,
+    referenceDocument: input.referenceDocument,
+  });
   const quizFormat: OllamaFormat = {
     type: "object",
     properties: {
@@ -518,38 +536,65 @@ export async function generateQuiz(input: GenerateQuizInput): Promise<GeneratedQ
     additionalProperties: false,
   };
 
+  const classContext = input.classProfile
+    ? ` THÔNG TIN NĂNG LỰC LỚP HỌC MỤC TIÊU: Lớp ${input.classProfile.className} (${input.classProfile.classLabel}), sĩ số ${input.classProfile.totalStudents} học sinh. Chỉ số thông minh: ${input.classProfile.intelligenceScore}/100. Tốc độ làm bài: ${input.classProfile.speedLabel}. Điểm trung bình: ${input.classProfile.averageScore.toFixed(1)}/10 (đúng ${input.classProfile.accuracyRate}%). Khuyến nghị: ${input.classProfile.summary}. Hãy điều chỉnh độ khó và độ dài câu hỏi tương thích với lớp này.`
+    : "";
+
+  const systemContent = [
+    rag.ragSystemPrompt,
+    classContext,
+    rag.customDocContext,
+    `CÁC CÂU HỎI MẪU CHUẨN MỰC THAM KHẢO (FEW-SHOT):\n${rag.fewShotContext}`,
+    `YÊU CẦU ĐẦU RA: Tạo đúng ${count} câu hỏi trắc nghiệm Toán (${normalCount} câu normal, ${count - normalCount} câu challenge). Trả về đúng JSON theo định dạng {questions: QuizQuestion[]}. id từ 1 đến ${count}. Mỗi câu phải có 4 lựa chọn, correctAnswer phải trùng 1 trong 4 lựa chọn, explanation giải thích rõ ràng bằng tiếng Việt.`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
   const parsed = await fetchParsedAIChat(
     [
       {
         role: "system",
-        content:
-          "Bạn là chuyên gia giáo dục tiểu học Việt Nam. BẮT BUỘC viết 100% nội dung bằng tiếng Việt có dấu; tuyệt đối không dùng tiếng Anh ở prompt, skill, lựa chọn hoặc lời giải. Dùng đúng lối trình bày đề trắc nghiệm trong mẫu: 'Câu 1. Tính: 37 + 62 = ...' với bốn lựa chọn ngắn A, B, C, D; trong JSON, options là mảng đúng 4 chuỗi, không thêm nhãn A-D vào chuỗi. Hãy tạo câu hỏi Toán lớp 1 an toàn, rõ ràng và trả về JSON {questions: QuizQuestion[]}. Không dùng kiến thức vượt chương trình. Tạo đúng count câu: nửa đầu phase normal, nửa sau phase challenge; id từ 1 đến count; correctAnswer phải trùng một options. Mỗi lần sinh hãy tạo một bộ câu hỏi khác, không lặp lại nội dung trong excludePrompts; variationSeed dùng để tạo biến thể mới. Câu hỏi PHẢI tự trả lời được. TUYỆT ĐỐI không tạo câu hỏi về vị trí (trên/dưới/trái/phải, 'ở đâu', 'so với'), nhận biết hình dạng/con vật, hoặc bất kỳ câu đếm số lượng nào (không dùng cụm 'Có bao nhiêu', 'có tất cả', 'đếm'); chỉ tạo câu hỏi về phép tính, so sánh và thứ tự số. Trường illustration LUÔN để chuỗi rỗng. TUYỆT ĐỐI không dùng tên file ảnh. Học sinh có chỉ số tổng thông minh intelligenceScore/100: hãy chọn độ khó của các câu sao cho phù hợp cá nhân, chỉ dùng các difficulty trong danh sách được cung cấp.",
+        content: systemContent,
       },
       {
         role: "user",
-        content: `Hãy tạo đề toán theo yêu cầu. Toàn bộ câu hỏi và lời giải phải viết bằng tiếng Việt. Dữ liệu đầu vào: ${JSON.stringify({
+        content: `Hãy tạo đề toán trắc nghiệm theo chuẩn RAG GDPT 2018. Toàn bộ câu hỏi và lời giải phải viết bằng tiếng Việt. Dữ liệu đầu vào: ${JSON.stringify({
           topic: input.topic,
           curriculumLevel: input.curriculumLevel,
+          gradeName: rag.curriculumStandard.gradeName,
           difficulties: input.difficulties,
           intelligenceScore: input.intelligenceScore,
           count,
           normalCount,
           variationSeed: input.variationSeed,
           excludePrompts: input.excludePrompts,
+          hasCustomReferenceDoc: Boolean(rag.processedDoc),
           requiredFields: ["id", "phase", "difficulty", "skill", "prompt", "options", "correctAnswer", "explanation"],
         })}`,
       },
     ],
-    0.45,
+    0.4,
     quizFormat,
   );
 
   if (Array.isArray(parsed?.questions) && parsed.questions.length > 0) {
     const validQuestions = parsed.questions.filter(isValidQuizQuestion).slice(0, count);
-    if (validQuestions.length) return { source: "ai", questions: validQuestions };
+    if (validQuestions.length) {
+      return {
+        source: "ai",
+        questions: validQuestions,
+        ragSummary: rag.ragSummaryText,
+        referenceDocName: rag.processedDoc?.name,
+      };
+    }
   }
 
-  return fallbackQuiz(count, input);
+  const fallback = fallbackQuiz(count, input);
+  return {
+    ...fallback,
+    ragSummary: rag.ragSummaryText,
+    referenceDocName: rag.processedDoc?.name,
+  };
 }
 
 function isValidQuizQuestion(value: unknown): value is QuizQuestion {
@@ -926,6 +971,7 @@ function normalizeSurveyQuestion(question: SurveyQuestion, index: number): Surve
  */
 export async function generateSurvey(input: GenerateSurveyInput = {}): Promise<GeneratedSurvey> {
   const count = Math.max(1, Math.min(30, input.count ?? 30));
+
   const parsed = await fetchParsedAIChat(
     [
         {
@@ -978,6 +1024,7 @@ export type GeneratedVariant = {
   question: SurveyQuestion;
 };
 export async function generateSurveyVariant(question: SurveyQuestion): Promise<GeneratedVariant> {
+
   const parsed = await fetchParsedAIChat(
     [
         {
@@ -1058,6 +1105,7 @@ function normalizeEvaluation(value: PathEvaluation, placement: PlacementResult):
  */
 export async function evaluatePathWithAI(input: EvaluatePathInput): Promise<GeneratedEvaluation> {
   const local = evaluatePathLocal(input.placement, input.attempts);
+
   const parsed = await fetchParsedAIChat(
     [
         {
@@ -1077,4 +1125,109 @@ export async function evaluatePathWithAI(input: EvaluatePathInput): Promise<Gene
     return { source: "ai", evaluation: normalizeEvaluation(parsed.evaluation, input.placement) };
   }
   return { source: "local", evaluation: local };
+}
+
+export type PersonalizeAIRequest = {
+  studentId: number | string;
+  studentName: string;
+  studentStatus: string; // "Xuất sắc" | "Đang tiến bộ" | "Ổn định" | "Cần hỗ trợ"
+  interest?: string;
+  topic?: string;
+  curriculumLevel?: number;
+};
+
+/**
+ * Cách 1: Sinh bộ câu hỏi cá nhân hóa độc nhất cho học sinh bằng AI (Ollama / OpenAI).
+ * AI sẽ đóng vai chuyên gia sư phạm sáng tác câu chuyện, bài toán đố và lời văn
+ * lồng ghép tên học sinh và chủ đề em yêu thích.
+ */
+export async function generatePersonalizedQuizWithAI(
+  req: PersonalizeAIRequest
+): Promise<QuizQuestion[] | null> {
+  const count = 10;
+  const status = req.studentStatus || "Ổn định";
+  const interest = req.interest || "Động vật dễ thương";
+  const topic = req.topic || "Toán học lớp 1";
+  const level = req.curriculumLevel || 1;
+
+  const difficultyHint =
+    status === "Cần hỗ trợ"
+      ? "Học sinh cần hỗ trợ: Đề bài dùng số nhỏ trong phạm vi 10, câu chữ ngắn gọn, có emoji đếm trực quan, mức độ dễ hiểu (Mức A, B)."
+      : status === "Xuất sắc"
+      ? "Học sinh xuất sắc: Đề bài mở rộng phạm vi 20, có bài toán tư duy logic, tìm quy luật, toán đố nhiều bước, mức độ nâng cao (Mức C, D, E)."
+      : "Học sinh mức ổn định: Đề bài cân bằng giữa đếm trực quan và tính nhẩm, phạm vi 10-15 (Mức B, C).";
+
+  const systemContent = `Bạn là chuyên gia sư phạm tiểu học hàng đầu tại Việt Nam.
+Nhiệm vụ của bạn là SÁNG TÁC một bộ đề toán 10 câu trắc nghiệm Lớp 1 (Chương trình GDPT 2018) được CÁ NHÂN HÓA ĐẶC BIỆT cho một học sinh cụ thể:
+- Tên học sinh: ${req.studentName}
+- Năng lực học tập: ${status} (${difficultyHint})
+- Chủ đề / Sở thích em yêu thích nhất: ${interest}
+- Chủ đề bài học: ${topic} (Khối ${level})
+
+YÊU CẦU QUAN TRỌNG:
+1. Hãy lồng ghép TÊN HỌC SINH ("bé ${req.studentName}" hoặc "${req.studentName}") và SỞ THÍCH (${interest}) vào ngữ cảnh, câu chuyện của từng câu hỏi để bé cảm thấy đề toán được viết riêng cho chính mình.
+2. Dùng các EMOJI sinh động minh họa trong đề bài (ví dụ nếu thích khủng long: 🦖, 🦕, 🥚; nếu vũ trụ: 🚀, ⭐, 🪐; nếu động vật: 🐰, 🐶, 🐱; nếu xe cộ: 🚗, 🏎️, 🚂...).
+3. Câu 1-7 là 'normal' (phát triển kỹ năng), Câu 8-10 là 'challenge' (thử thách hứng thú).
+4. Mỗi câu có 4 lựa chọn (options), correctAnswer phải nằm trong options, explanation giải thích rõ ràng, động viên bé.
+5. Toán lớp 1: Phép cộng trừ trong phạm vi 10-20, không nhớ hoặc cộng trừ đơn giản, so sánh số lượng, đếm hình, tìm số còn thiếu.
+6. Trả về ĐÚNG định dạng JSON: { "questions": [ { "id": 1, "phase": "normal", "difficulty": "A", "skill": "...", "prompt": "...", "options": ["...", "...", "...", "..."], "correctAnswer": "...", "explanation": "..." } ] }`;
+
+  const userContent = `Hãy sáng tạo ngay bộ 10 câu hỏi toán độc nhất cho bé ${req.studentName} theo chủ đề "${interest}".`;
+
+  try {
+    const parsed = await fetchParsedAIChat(
+      [
+        { role: "system", content: systemContent },
+        { role: "user", content: userContent },
+      ],
+      0.7, // Higher temperature for high creativity and distinct narrative
+      {
+        type: "object",
+        properties: {
+          questions: {
+            type: "array",
+            minItems: count,
+            maxItems: count,
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "integer" },
+                phase: { type: "string", enum: ["normal", "challenge"] },
+                difficulty: { type: "string" },
+                skill: { type: "string" },
+                prompt: { type: "string" },
+                options: { type: "array", items: { type: "string" }, minItems: 4, maxItems: 4 },
+                correctAnswer: { type: "string" },
+                explanation: { type: "string" },
+              },
+              required: ["id", "phase", "difficulty", "skill", "prompt", "options", "correctAnswer", "explanation"],
+            },
+          },
+        },
+        required: ["questions"],
+      }
+    );
+
+    if (Array.isArray(parsed?.questions) && parsed.questions.length > 0) {
+      const validQuestions = parsed.questions.filter(isValidQuizQuestion).slice(0, count);
+      if (validQuestions.length >= 8) {
+        return validQuestions.map((q, idx) => ({
+          ...q,
+          id: idx + 1,
+          isAdaptive: true,
+          personalizedFor: {
+            studentId: req.studentId,
+            studentName: req.studentName,
+            interest,
+            status,
+            generatedBy: "ai",
+          },
+        }));
+      }
+    }
+  } catch (err) {
+    console.warn("AI generation for student failed or timed out:", err);
+  }
+
+  return null;
 }

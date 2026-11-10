@@ -4,6 +4,7 @@ import { classroomMemberships, classrooms, quizAttempts, users } from "@/db/sche
 import { deriveStatus, initialsOf } from "@/lib/student-data";
 import { formatStudentCode } from "@/lib/student-code";
 import { getAuthenticatedSupabaseUser, getOrCreateAppUser } from "@/lib/server-user";
+import { computeClassLearningProfile } from "@/lib/class-analytics";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,11 @@ export async function GET(request: Request, { params }: RouteContext) {
     const [classroom] = await db
       .select()
       .from(classrooms)
-      .where(and(eq(classrooms.id, classId), eq(classrooms.teacherId, user.id)))
+      .where(
+        user.role === "admin"
+          ? eq(classrooms.id, classId)
+          : and(eq(classrooms.id, classId), eq(classrooms.teacherId, user.id))
+      )
       .limit(1);
     if (!classroom || (user.role !== "teacher" && user.role !== "admin")) {
       return Response.json({ message: "Không tìm thấy lớp học" }, { status: 404 });
@@ -58,7 +63,17 @@ export async function GET(request: Request, { params }: RouteContext) {
       totalLessons: number;
       lastActive: string;
       status: ReturnType<typeof deriveStatus>;
+      interest?: string;
     }>();
+    const themeList = [
+      "Động vật dễ thương",
+      "Khủng long phiêu lưu",
+      "Vũ trụ & Phi thuyền",
+      "Xe cộ & Giao thông",
+      "Công chúa & Phép thuật",
+      "Kẹo ngọt & Trái cây",
+    ];
+
     for (const row of rows) {
       const appUser = row.student;
       const existing = studentsById.get(appUser.id);
@@ -91,6 +106,7 @@ export async function GET(request: Request, { params }: RouteContext) {
         totalLessons: 100,
         lastActive: row.completedAt?.toISOString().slice(0, 10) ?? appUser.lastActiveAt.toISOString().slice(0, 10),
         status: deriveStatus(row.score ?? 0),
+        interest: themeList[appUser.id % themeList.length],
       });
     }
     const students = [...studentsById.values()].map((student) => {
@@ -98,10 +114,14 @@ export async function GET(request: Request, { params }: RouteContext) {
       const score = lessonsCompleted ? Math.round(student.score / lessonsCompleted) : 0;
       return { ...student, score, status: deriveStatus(score) };
     });
+
+    const classProfile = await computeClassLearningProfile(classId);
+
     return Response.json({
       classroom: { ...classroom, id: String(classroom.id) },
       students,
       initials: students.map((student) => ({ id: student.id, value: initialsOf(student.fullName) })),
+      classProfile,
     });
   } catch (error) {
     console.error("Load classroom details error", error);
