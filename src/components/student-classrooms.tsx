@@ -5,6 +5,7 @@ import type { Assignment } from "@/lib/assignment-data";
 import { smartLotusApi, type ClassroomInvitation } from "@/lib/api";
 import type { Classroom } from "@/lib/student-data";
 import { Icon } from "./icons";
+import QrScannerModal from "./qr-scanner-modal";
 
 async function loadStudentClassroomData() {
   return Promise.all([
@@ -25,6 +26,7 @@ export default function StudentClassrooms({ onStartAssignment }: { onStartAssign
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [joining, setJoining] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
 
   async function refresh() {
     try {
@@ -37,6 +39,27 @@ export default function StudentClassrooms({ onStartAssignment }: { onStartAssign
       setError(loadError instanceof Error ? loadError.message : "Không thể tải lớp học và bài tập");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function submitJoinCode(code: string) {
+    const cleanCode = code.trim().toUpperCase();
+    if (!cleanCode) {
+      setError("Nhập mã lớp do giáo viên chia sẻ.");
+      return;
+    }
+    setJoining(true);
+    setError("");
+    try {
+      const res = await smartLotusApi.joinClassroom(cleanCode);
+      setNotice(`Tham gia lớp ${res.classroom.name} thành công!`);
+      setJoinCode("");
+      setLoading(true);
+      await refresh();
+    } catch (joinError) {
+      setError(joinError instanceof Error ? joinError.message : "Không thể tham gia lớp học");
+    } finally {
+      setJoining(false);
     }
   }
 
@@ -53,27 +76,31 @@ export default function StudentClassrooms({ onStartAssignment }: { onStartAssign
     }).finally(() => {
       if (active) setLoading(false);
     });
+
+    // Check if URL has ?joinCode=XYZ from scanning QR
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      const codeFromUrl = urlParams.get("joinCode") || urlParams.get("code");
+      if (codeFromUrl) {
+        const clean = codeFromUrl.trim().toUpperCase();
+        setJoinCode(clean);
+        void submitJoinCode(clean);
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }
+
     return () => { active = false; };
   }, []);
 
   async function joinClass(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!joinCode.trim()) {
-      setError("Nhập mã lớp do giáo viên chia sẻ.");
-      return;
-    }
-    setJoining(true);
-    setError("");
-    try {
-      await smartLotusApi.joinClassroom(joinCode.trim());
-      setJoinCode("");
-      setLoading(true);
-      await refresh();
-    } catch (joinError) {
-      setError(joinError instanceof Error ? joinError.message : "Không thể tham gia lớp học");
-    } finally {
-      setJoining(false);
-    }
+    await submitJoinCode(joinCode);
+  }
+
+  function handleQrScanned(detectedCode: string) {
+    setShowScanner(false);
+    setJoinCode(detectedCode);
+    void submitJoinCode(detectedCode);
   }
 
   async function respondToInvite(invitation: ClassroomInvitation, decision: "accepted" | "declined") {
@@ -144,13 +171,36 @@ export default function StudentClassrooms({ onStartAssignment }: { onStartAssign
       <form className="card student-class-join" onSubmit={(event) => void joinClass(event)}>
         <div>
           <span className="section-kicker">THAM GIA LỚP</span>
-          <h2>Nhập mã lớp</h2>
+          <h2>Nhập mã hoặc quét QR</h2>
         </div>
         <label>
           <span className="sr-only">Mã lớp</span>
           <input value={joinCode} onChange={(event) => setJoinCode(event.target.value.toUpperCase())} maxLength={12} placeholder="VD: A1B2C3D4E5" />
         </label>
-        <button className="primary-button" type="submit" disabled={joining}>{joining ? "Đang tham gia..." : "Tham gia lớp"}</button>
+        <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => setShowScanner(true)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "10px 16px",
+              borderRadius: "12px",
+              border: "1.5px solid #c084fc",
+              background: "#faf5ff",
+              color: "#7c3aed",
+              fontSize: "13px",
+              fontWeight: 750,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <span>📷</span>
+            <span>Quét mã QR</span>
+          </button>
+          <button className="primary-button" type="submit" disabled={joining}>{joining ? "Đang tham gia..." : "Tham gia lớp"}</button>
+        </div>
       </form>
       {error && <p className="student-form-error" role="alert">{error}</p>}
 
@@ -212,6 +262,14 @@ export default function StudentClassrooms({ onStartAssignment }: { onStartAssign
             </article>
           ))}
         </section>
+      )}
+
+      {showScanner && (
+        <QrScannerModal
+          onClose={() => setShowScanner(false)}
+          onCodeDetected={handleQrScanned}
+          onToast={setNotice}
+        />
       )}
     </div>
   );

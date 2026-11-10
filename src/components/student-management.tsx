@@ -55,9 +55,10 @@ type StudentManagementProps = {
   classSubtitle?: string;
   onBack?: () => void;
   serverManaged?: boolean;
+  onOpenQr?: () => void;
 };
 
-export default function StudentManagement({ classId, classLabel, classTitle, classSubtitle, onBack, serverManaged = false }: StudentManagementProps = {}) {
+export default function StudentManagement({ classId, classLabel, classTitle, classSubtitle, onBack, serverManaged = false, onOpenQr }: StudentManagementProps = {}) {
   const [students, setStudents] = useState<Student[]>(serverManaged ? [] : loadStudents);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | StudentStatus>("all");
@@ -268,6 +269,26 @@ export default function StudentManagement({ classId, classLabel, classTitle, cla
             >
               <Icon name="sparkles" size={14} />
               {seeding ? "Đang nạp..." : "⚡ Nạp 5 HS mẫu"}
+            </button>
+          )}
+          {onOpenQr && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={onOpenQr}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                color: "#7c3aed",
+                borderColor: "#c084fc",
+                background: "#faf5ff",
+                fontWeight: 750,
+              }}
+              title="Xem và tải mã QR tham gia lớp học"
+            >
+              <span>📷</span>
+              <span>Mã QR lớp</span>
             </button>
           )}
           <button className="primary-button" onClick={() => setModal({ mode: "add" })}>

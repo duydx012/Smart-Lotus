@@ -5,6 +5,7 @@ import { Icon } from "./icons";
 import { smartLotusApi, type StudentClassroomRequest } from "@/lib/api";
 import type { Classroom } from "@/lib/student-data";
 import ClassroomFeedView from "./classroom-feed-view";
+import ClassroomQrModal from "./classroom-qr-modal";
 
 export default function TeacherExtraClasses({
   requests,
@@ -26,6 +27,7 @@ export default function TeacherExtraClasses({
   const [selectedClassId, setSelectedClassId] = useState<string>("");
   const [filter, setFilter] = useState<"all" | "pending" | "accepted" | "declined">("pending");
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [qrClassroom, setQrClassroom] = useState<Classroom | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newClassName, setNewClassName] = useState("");
@@ -215,6 +217,30 @@ export default function TeacherExtraClasses({
                   </option>
                 ))}
               </select>
+
+              {activeClassroom && (
+                <button
+                  type="button"
+                  onClick={() => setQrClassroom(activeClassroom)}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "5px",
+                    padding: "8px 12px",
+                    borderRadius: "10px",
+                    border: "1.5px solid #d8b4fe",
+                    background: "#faf5ff",
+                    color: "#7c3aed",
+                    fontSize: "12.5px",
+                    fontWeight: 750,
+                    cursor: "pointer",
+                  }}
+                  title="Xem và tải mã QR lớp học thêm"
+                >
+                  <span>📷</span>
+                  <span>Mã QR</span>
+                </button>
+              )}
             </div>
           )}
 
@@ -809,6 +835,14 @@ export default function TeacherExtraClasses({
             </form>
           </div>
         </div>
+      )}
+
+      {qrClassroom && (
+        <ClassroomQrModal
+          classroom={qrClassroom}
+          onClose={() => setQrClassroom(null)}
+          onToast={onToast}
+        />
       )}
     </div>
   );

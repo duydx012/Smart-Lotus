@@ -5,6 +5,7 @@ import { Icon } from "./icons";
 import StudentManagement from "./student-management";
 import { classColorPalette, type Classroom } from "@/lib/student-data";
 import { smartLotusApi } from "@/lib/api";
+import ClassroomQrModal from "./classroom-qr-modal";
 
 type ClassModalState = { mode: "create" } | { mode: "edit"; classroom: Classroom } | null;
 
@@ -14,6 +15,7 @@ export default function Classroom() {
   const [modal, setModal] = useState<ClassModalState>(null);
   const [createdClassroom, setCreatedClassroom] = useState<Classroom | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Classroom | null>(null);
+  const [qrClassroom, setQrClassroom] = useState<Classroom | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -60,14 +62,20 @@ export default function Classroom() {
 
   if (selectedClass) {
     return (
-      <StudentManagement
-        classId={selectedClass.id}
-        classLabel={selectedClass.label}
-        classTitle={selectedClass.name}
-        classSubtitle={selectedClass.description}
-        onBack={() => setSelectedClass(null)}
-        serverManaged
-      />
+      <>
+        <StudentManagement
+          classId={selectedClass.id}
+          classLabel={selectedClass.label}
+          classTitle={selectedClass.name}
+          classSubtitle={selectedClass.description}
+          onBack={() => setSelectedClass(null)}
+          onOpenQr={() => setQrClassroom(selectedClass)}
+          serverManaged
+        />
+        {qrClassroom && (
+          <ClassroomQrModal classroom={qrClassroom} onClose={() => setQrClassroom(null)} />
+        )}
+      </>
     );
   }
 
@@ -95,6 +103,7 @@ export default function Classroom() {
             onOpen={() => setSelectedClass(classroom)}
             onRename={() => setModal({ mode: "edit", classroom })}
             onDelete={() => setConfirmDelete(classroom)}
+            onShowQr={() => setQrClassroom(classroom)}
           />
         ))}
         <button className="classroom-card classroom-create" onClick={() => setModal({ mode: "create" })}>
@@ -106,19 +115,51 @@ export default function Classroom() {
 
       {modal && <ClassFormModal modal={modal} onClose={() => setModal(null)} onSaved={saveClassroom} />}
       {createdClassroom && (
-        <ClassCreatedModal classroom={createdClassroom} onClose={() => setCreatedClassroom(null)} />
+        <ClassCreatedModal
+          classroom={createdClassroom}
+          onClose={() => setCreatedClassroom(null)}
+          onOpenQr={() => setQrClassroom(createdClassroom)}
+        />
       )}
       {confirmDelete && <ConfirmDeleteClass classroom={confirmDelete} onCancel={() => setConfirmDelete(null)} onConfirm={() => removeClassroom(confirmDelete.id)} />}
+      {qrClassroom && (
+        <ClassroomQrModal classroom={qrClassroom} onClose={() => setQrClassroom(null)} />
+      )}
     </div>
   );
 }
 
-function ClassCard({ classroom, studentCount, onOpen, onRename, onDelete }: { classroom: Classroom; studentCount: number; onOpen: () => void; onRename: () => void; onDelete: () => void }) {
+function ClassCard({
+  classroom,
+  studentCount,
+  onOpen,
+  onRename,
+  onDelete,
+  onShowQr,
+}: {
+  classroom: Classroom;
+  studentCount: number;
+  onOpen: () => void;
+  onRename: () => void;
+  onDelete: () => void;
+  onShowQr: () => void;
+}) {
   return (
     <article className="classroom-card">
       <div className={`classroom-card-banner tone-${classroom.color}`}>
         <span className="classroom-card-banner-title">{classroom.name}</span>
         <div className="classroom-card-menu">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onShowQr();
+            }}
+            title="Xem mã QR tham gia lớp"
+            aria-label={`Mã QR ${classroom.name}`}
+          >
+            <span style={{ fontSize: "14px" }}>📷</span>
+          </button>
           <button onClick={(event) => { event.stopPropagation(); onRename(); }} aria-label={`Đổi tên ${classroom.name}`}><Icon name="edit" size={14} /></button>
           <button onClick={(event) => { event.stopPropagation(); onDelete(); }} aria-label={`Xoá ${classroom.name}`}><Icon name="trash" size={14} /></button>
         </div>
@@ -129,7 +170,31 @@ function ClassCard({ classroom, studentCount, onOpen, onRename, onDelete }: { cl
           <small>{classroom.subject}</small>
           <p>{classroom.description || "Chưa có mô tả"}</p>
           <span className="classroom-card-count">{studentCount} học sinh</span>
-          {classroom.joinCode && <span className="classroom-join-code">Mã tham gia: <strong>{classroom.joinCode}</strong></span>}
+          {classroom.joinCode && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "4px" }}>
+              <span className="classroom-join-code">Mã: <strong>{classroom.joinCode}</strong></span>
+              <span
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onShowQr();
+                }}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  padding: "3px 8px",
+                  background: "#f3e8ff",
+                  color: "#7c3aed",
+                  borderRadius: "6px",
+                  fontSize: "11px",
+                  fontWeight: 750,
+                  cursor: "pointer",
+                }}
+              >
+                📷 Mã QR
+              </span>
+            </div>
+          )}
         </span>
         <span className="classroom-card-arrow"><Icon name="arrow" size={16} /></span>
       </button>
@@ -211,7 +276,15 @@ function ClassFormModal({ modal, onClose, onSaved }: { modal: Exclude<ClassModal
   );
 }
 
-function ClassCreatedModal({ classroom, onClose }: { classroom: Classroom; onClose: () => void }) {
+function ClassCreatedModal({
+  classroom,
+  onClose,
+  onOpenQr,
+}: {
+  classroom: Classroom;
+  onClose: () => void;
+  onOpenQr?: () => void;
+}) {
   const [copyNotice, setCopyNotice] = useState("");
 
   async function copyJoinCode() {
@@ -232,13 +305,26 @@ function ClassCreatedModal({ classroom, onClose }: { classroom: Classroom; onClo
       <section className="student-modal class-created-modal" role="dialog" aria-modal="true" aria-labelledby="class-created-title" onClick={(event) => event.stopPropagation()}>
         <span className="section-kicker">TẠO LỚP THÀNH CÔNG</span>
         <h2 id="class-created-title">Mã tham gia lớp {classroom.name}</h2>
-        <p>Chia sẻ mã này với học sinh để các em tham gia lớp.</p>
+        <p>Chia sẻ mã này hoặc mã QR với học sinh để các em tham gia lớp.</p>
         <div className="class-created-code" aria-label={`Mã tham gia ${classroom.joinCode ?? "chưa có"}`}>
           {classroom.joinCode ?? "Chưa có mã"}
         </div>
         {copyNotice && <p className="class-created-copy-notice" role="status">{copyNotice}</p>}
-        <div className="student-modal-actions">
+        <div className="student-modal-actions" style={{ flexWrap: "wrap" }}>
           <button type="button" className="secondary-button" onClick={onClose}>Đóng</button>
+          {onOpenQr && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                onClose();
+                onOpenQr();
+              }}
+              style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: "#7c3aed", borderColor: "#c084fc" }}
+            >
+              📷 Xem mã QR
+            </button>
+          )}
           <button type="button" className="primary-button" onClick={() => void copyJoinCode()} disabled={!classroom.joinCode}>Sao chép mã</button>
         </div>
       </section>
